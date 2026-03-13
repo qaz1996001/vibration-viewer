@@ -186,21 +186,124 @@ Frontend (Vue 3 + TypeScript)
 
 ---
 
+## 方案 E：Tauri + React/Vue + BokehJS（純 JavaScript，不需要 Python）
+
+### 什麼是 BokehJS？
+
+[BokehJS](https://github.com/bokeh/bokeh/tree/branch-3.10/bokehjs) 是 Bokeh 的**純 JavaScript/TypeScript 前端核心**，npm 套件名為 `@bokeh/bokehjs`。它可以完全脫離 Python 獨立運行，提供與 Python Bokeh 相同的繪圖模型和互動能力。
+
+- 原生 TypeScript 撰寫，型別安全
+- npm 安裝：`npm install @bokeh/bokehjs`
+- 官方提供 React / Vue / Vite / Webpack 整合範例（[bokehjs-examples](https://github.com/bokeh/bokehjs-examples)）
+- **不需要嵌入 Python runtime**，純前端套件
+
+### 架構
+
+```
+Tauri (Rust backend)
+├── 資料讀取：csv / polars crate
+├── Downsampling：LTTB
+├── 標注儲存：serde_json / rusqlite
+└── IPC：tauri::command
+
+Frontend (React 或 Vue + TypeScript)
+├── 繪圖：@bokeh/bokehjs（BokehJS 獨立套件）
+├── 標注 UI：BoxAnnotation + Label + BoxEditTool + PointDrawTool
+├── 狀態管理：zustand / Pinia
+└── UI 框架：Ant Design / Element Plus
+```
+
+### 優點
+
+- **與現有 Dashboard 模型一致** — 你目前的 Bokeh HTML 使用的所有模型（Figure、ColumnDataSource、DataTable、HoverTool 等）在 BokehJS 中是完全相同的 class，遷移概念成本最低
+- **原生 TypeScript** — BokehJS 本身就是 TypeScript 寫的，型別定義完整，IDE 提示良好
+- **內建編輯工具豐富** — BokehJS 提供一整套 Edit Tools：
+  - `BoxEditTool` — 可互動繪製、拖拉、刪除矩形區域（Rect/Block/Quad/HBar/VBar/HStrip/VStrip）
+  - `PointDrawTool` — 可互動新增、拖拉、刪除標記點
+  - `PolyDrawTool` / `PolyEditTool` — 可互動繪製/編輯多邊形
+  - `FreehandDrawTool` — 手繪工具
+  - `LineEditTool` — 編輯線段
+- **BoxEditTool 支援拖拉** — 原生支援 pan（拖拉移動）、draw（繪製新方塊）、tap（選取）、Backspace（刪除），這是其他方案中最難實作的功能
+- **Annotation 種類完整** — Label、LabelSet、BoxAnnotation、Span、Arrow、Band、Whisker、PolyAnnotation 等全部可用
+- **事件系統完整** — SelectionGeometry 事件支援 5 種選取模式（Replace / Append / Intersect / Subtract / XOR）
+- **DataTable 內建** — 你現有的統計表可直接沿用
+- **不需要 Python** — 純 JS 套件，Tauri 打包體積不受影響
+
+### 缺點
+
+- **BokehJS 獨立使用的文件較少** — 官方文件主要面向 Python 使用者，純 JS API 文件需要參考 TypeScript 原始碼和 [bokehjs-examples](https://github.com/bokeh/bokehjs-examples)
+- **社群規模小** — npm 下載量遠低於 ECharts/uPlot，遇到問題 StackOverflow 答案少，可能需要直接看原始碼或開 GitHub Issue
+- **Bundle 體積較大** — BokehJS 完整套件包含 WebGL (Regl)、MathJax、地圖等模組，體積預估 ~800KB-1.5MB (gzip)，遠大於 ECharts (~300KB gzip) 和 uPlot (~45KB gzip)
+- **API 風格偏 Python** — BokehJS 的 API 是映射自 Python Bokeh（如 `figure()` → `Bokeh.Plotting.figure()`），不是典型的 JS/React 風格，需要適應
+- **缺乏 dataZoom 等便利元件** — Bokeh 的縮放是靠 WheelZoomTool + BoxZoomTool + RangeTool，沒有 ECharts 那種拖拉式 dataZoom 滑軌
+- **BokehJS 4.0 潛在破壞性變更** — 官方提到部分 standalone 功能要到 BokehJS 4.0 才完整，目前 3.x 版可能有些 edge case
+- **框架整合不如 ECharts 成熟** — 沒有官方的 `react-bokeh` 或 `vue-bokeh` wrapper，需要手動管理生命週期
+
+### 標注功能實作方式
+
+| 需求 | BokehJS 方案 |
+|------|-------------|
+| 標記點（顯示時間與值） | `PointDrawTool` + `ColumnDataSource` + `Label` / `HoverTool` — **原生互動，可拖拉** |
+| 標記區間（半透明方塊） | `BoxEditTool` + `Rect` glyph + `ColumnDataSource` — **原生繪製/拖拉/刪除** |
+| 框選賦予標籤 | `BoxSelectTool` + `SelectionGeometry` 事件 → 回調中寫入標籤到 DataSource |
+| Label 拖拉調整位置 | `PointDrawTool` 搭配 `LabelSet`（Label 位置綁定到可拖拉的 DataSource） |
+| 標注持久化 | `ColumnDataSource.data` 直接 JSON 序列化 → Tauri IPC 存檔 |
+
+### 關鍵優勢：Edit Tools 原生解決最難的問題
+
+其他方案（ECharts / uPlot）中最困難的「**拖拉標注位置**」和「**互動繪製區間**」，在 BokehJS 中是**內建功能**：
+
+```typescript
+import * as Bokeh from "@bokeh/bokehjs"
+
+// 建立可編輯的矩形區間（標注用）
+const annotation_source = new Bokeh.ColumnDataSource({
+  data: { x: [], y: [], width: [], height: [], label: [] }
+})
+
+const rects = fig.rect({
+  source: annotation_source,
+  x: { field: "x" }, y: { field: "y" },
+  width: { field: "width" }, height: { field: "height" },
+  fill_alpha: 0.3, fill_color: "#ff6b6b",
+})
+
+// BoxEditTool：使用者可以直接在圖上畫方塊、拖拉移動、按 Backspace 刪除
+const box_edit = new Bokeh.BoxEditTool({ renderers: [rects] })
+fig.add_tools(box_edit)
+
+// 當 source 資料變更時，自動同步到 Rust 後端存檔
+annotation_source.change.connect(() => {
+  // tauri invoke save_annotations...
+})
+```
+
+### 預估開發難度：⭐⭐ (低，若熟悉 Bokeh)  /  ⭐⭐⭐⭐ (高，若不熟悉 Bokeh)
+
+---
+
 ## 方案總比較
 
-| 比較項目 | A: React+ECharts | B: React+uPlot | C: Svelte+ECharts | D: Vue3+ECharts |
-|---------|-------------------|-----------------|--------------------|-----------------|
-| 繪圖效能 | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
-| 標注功能開發成本 | ⭐⭐ (低) | ⭐⭐⭐⭐⭐ (高) | ⭐⭐ (低) | ⭐⭐ (低) |
-| 打包體積 | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
-| 中文社群/文件 | ⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
-| ECharts 整合度 | ⭐⭐⭐⭐ | N/A | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
-| 生態/元件庫 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ |
-| 學習曲線 | 低 | 高 | 中（若不熟） | 低 |
+| 比較項目 | A: React+ECharts | B: React+uPlot | C: Svelte+ECharts | D: Vue3+ECharts | **E: React/Vue+BokehJS** |
+|---------|-------------------|-----------------|--------------------|-----------------|-----------------------|
+| 繪圖效能 | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ (Canvas+WebGL) |
+| 標注功能開發成本 | ⭐⭐ (低) | ⭐⭐⭐⭐⭐ (高) | ⭐⭐ (低) | ⭐⭐ (低) | **⭐ (最低)** |
+| 拖拉標注/繪製區間 | ⭐⭐⭐ (需 hack) | ⭐⭐⭐⭐⭐ (全自寫) | ⭐⭐⭐ (需 hack) | ⭐⭐⭐ (需 hack) | **⭐ (原生內建)** |
+| 打包體積 | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ (最大) |
+| 中文社群/文件 | ⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐ (文件偏 Python) |
+| 整合度/Wrapper | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐ (需手動管理) |
+| 生態/元件庫 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ |
+| 與現有 Dashboard 相容 | ⭐ (全部重寫) | ⭐ (全部重寫) | ⭐ (全部重寫) | ⭐ (全部重寫) | **⭐⭐⭐⭐⭐ (模型一致)** |
+| 學習曲線 | 低 | 高 | 中（若不熟） | 低 | 低（若熟 Bokeh）/ 高（若不熟）|
 
 ---
 
 ## 建議
+
+### 如果你已經熟悉 Bokeh 且標注互動是核心需求 → 選 **方案 E (React/Vue + BokehJS)**
+- BoxEditTool / PointDrawTool **原生解決最困難的拖拉標注問題**
+- 與現有 Dashboard 模型完全一致，遷移概念成本最低
+- 代價是 bundle 較大、獨立使用文件較少
 
 ### 如果你熟悉 Vue → 選 **方案 D (Vue 3 + ECharts)**
 - vue-echarts 官方封裝最省事，中文資源最豐富
@@ -272,4 +375,4 @@ fn export_data(
 
 ## 下一步
 
-請選擇你偏好的方案（A / B / C / D），我將據此初始化 Tauri 專案並開始實作。
+請選擇你偏好的方案（A / B / C / D / E），我將據此初始化 Tauri 專案並開始實作。
