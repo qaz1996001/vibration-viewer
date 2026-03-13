@@ -231,13 +231,37 @@ Frontend (React 或 Vue + TypeScript)
 
 ### 缺點
 
-- **BokehJS 獨立使用的文件較少** — 官方文件主要面向 Python 使用者，純 JS API 文件需要參考 TypeScript 原始碼和 [bokehjs-examples](https://github.com/bokeh/bokehjs-examples)
-- **社群規模小** — npm 下載量遠低於 ECharts/uPlot，遇到問題 StackOverflow 答案少，可能需要直接看原始碼或開 GitHub Issue
-- **Bundle 體積較大** — BokehJS 完整套件包含 WebGL (Regl)、MathJax、地圖等模組，體積預估 ~800KB-1.5MB (gzip)，遠大於 ECharts (~300KB gzip) 和 uPlot (~45KB gzip)
+- **⚠️ npm 安裝目前有問題（3.x 版）** — 官方 [bokehjs-examples](https://github.com/bokeh/bokehjs-examples) 明確指出：*「Currently these examples cannot be built using a release NPM package of BokehJS as changes are required which will not be released until BokehJS 4.0.」* 目前要用 npm 整合需要從 dev branch 自行建置，CDN 方式則正常可用
+- **ES Module 初始化問題** — 已知 [Issue #13732](https://github.com/bokeh/bokeh/issues/13732)：以 ES module import 方式使用時，model 初始化可能失敗（缺少全域 `Bokeh` 物件），需要 workaround
+- **Bundle 體積最大** — 完整套件約 **~3MB (minified)**，包含 28 個 runtime dependencies（Preact、Regl/WebGL、MathJax、proj4 地圖投影、SlickGrid、nouislider 等），大部分與振動標注無關。**不支援 tree-shaking**，無法只載入需要的部分
+- **BokehJS 獨立使用的文件較少** — 官方文件主要面向 Python 使用者，純 JS API 文件需要參考 TypeScript 原始碼和 bokehjs-examples
+- **社群規模極小** — npm 僅 8 個依賴專案，下載量遠低於 ECharts/uPlot，遇到問題 StackOverflow 答案少，基本上需要直接看原始碼或開 GitHub Issue
 - **API 風格偏 Python** — BokehJS 的 API 是映射自 Python Bokeh（如 `figure()` → `Bokeh.Plotting.figure()`），不是典型的 JS/React 風格，需要適應
 - **缺乏 dataZoom 等便利元件** — Bokeh 的縮放是靠 WheelZoomTool + BoxZoomTool + RangeTool，沒有 ECharts 那種拖拉式 dataZoom 滑軌
-- **BokehJS 4.0 潛在破壞性變更** — 官方提到部分 standalone 功能要到 BokehJS 4.0 才完整，目前 3.x 版可能有些 edge case
 - **框架整合不如 ECharts 成熟** — 沒有官方的 `react-bokeh` 或 `vue-bokeh` wrapper，需要手動管理生命週期
+
+### ⚠️ 風險提醒
+
+| 風險 | 嚴重度 | 說明 |
+|------|--------|------|
+| npm 整合壞掉 | **高** | 3.x 版 npm 包無法正常用於 bundler（Vite/Webpack），需等 4.0 或自行從 dev branch 建置 |
+| ES module 初始化 | **中** | [#13732](https://github.com/bokeh/bokeh/issues/13732) 需要 workaround |
+| 不可 tree-shake | **中** | 3MB 全量載入，Tauri WebView 首次載入可能慢 |
+| 4.0 破壞性變更 | **中** | 遷移到 4.0 時 API 可能改變 |
+
+### 替代方案：CDN 模式繞過 npm 問題
+
+如果選擇 BokehJS，可以先用 CDN 方式避開 npm 整合問題：
+
+```html
+<!-- 在 Tauri 的 index.html 中 -->
+<script src="https://cdn.bokeh.org/bokeh/release/bokeh-3.8.2.min.js"></script>
+<script src="https://cdn.bokeh.org/bokeh/release/bokeh-api-3.8.2.min.js"></script>
+<script src="https://cdn.bokeh.org/bokeh/release/bokeh-widgets-3.8.2.min.js"></script>
+<script src="https://cdn.bokeh.org/bokeh/release/bokeh-tables-3.8.2.min.js"></script>
+```
+
+或將 JS 檔下載到本地嵌入，避免離線時無法使用。但這樣會失去 TypeScript 型別提示的優勢。
 
 ### 標注功能實作方式
 
@@ -289,21 +313,23 @@ annotation_source.change.connect(() => {
 | 繪圖效能 | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ (Canvas+WebGL) |
 | 標注功能開發成本 | ⭐⭐ (低) | ⭐⭐⭐⭐⭐ (高) | ⭐⭐ (低) | ⭐⭐ (低) | **⭐ (最低)** |
 | 拖拉標注/繪製區間 | ⭐⭐⭐ (需 hack) | ⭐⭐⭐⭐⭐ (全自寫) | ⭐⭐⭐ (需 hack) | ⭐⭐⭐ (需 hack) | **⭐ (原生內建)** |
-| 打包體積 | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ (最大) |
+| 打包體積 | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐ (~3MB, 最大) |
 | 中文社群/文件 | ⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐ (文件偏 Python) |
 | 整合度/Wrapper | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐ (需手動管理) |
 | 生態/元件庫 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ |
 | 與現有 Dashboard 相容 | ⭐ (全部重寫) | ⭐ (全部重寫) | ⭐ (全部重寫) | ⭐ (全部重寫) | **⭐⭐⭐⭐⭐ (模型一致)** |
+| npm/bundler 成熟度 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | **⭐ (3.x 壞掉, 等 4.0)** |
 | 學習曲線 | 低 | 高 | 中（若不熟） | 低 | 低（若熟 Bokeh）/ 高（若不熟）|
 
 ---
 
 ## 建議
 
-### 如果你已經熟悉 Bokeh 且標注互動是核心需求 → 選 **方案 E (React/Vue + BokehJS)**
+### 如果你已經熟悉 Bokeh 且標注互動是核心需求 → 考慮 **方案 E (React/Vue + BokehJS)**
 - BoxEditTool / PointDrawTool **原生解決最困難的拖拉標注問題**
 - 與現有 Dashboard 模型完全一致，遷移概念成本最低
-- 代價是 bundle 較大、獨立使用文件較少
+- **⚠️ 但有風險**：npm 整合在 3.x 壞掉（需等 4.0 或用 CDN 繞過），bundle ~3MB 不可 tree-shake，社群極小
+- 適合願意接受風險、並能自行排除 BokehJS 底層問題的開發者
 
 ### 如果你熟悉 Vue → 選 **方案 D (Vue 3 + ECharts)**
 - vue-echarts 官方封裝最省事，中文資源最豐富
