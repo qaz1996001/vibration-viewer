@@ -25,6 +25,16 @@ export function addAnnotation(
 	dirty.set(true);
 }
 
+export function updateAnnotation(
+	id: string,
+	updates: Partial<Pick<Annotation, 'label' | 'color' | 'label_offset_x' | 'label_offset_y' | 'annotation_type'>>
+): void {
+	annotations.update((list) =>
+		list.map((a) => (a.id === id ? { ...a, ...updates } : a))
+	);
+	dirty.set(true);
+}
+
 export function removeAnnotation(id: string): void {
 	annotations.update((list) => list.filter((a) => a.id !== id));
 	selectedId.update((sel) => (sel === id ? null : sel));
@@ -37,18 +47,28 @@ export function annotationPath(filePath: string): string {
 }
 
 export async function saveAnnotations(filePath: string): Promise<void> {
-	const current = get(annotations);
-	await invoke('save_annotations', {
-		annotationPath: annotationPath(filePath),
-		annotations: current
-	});
-	dirty.set(false);
+	try {
+		const current = get(annotations);
+		await invoke('save_annotations', {
+			annotationPath: annotationPath(filePath),
+			annotations: current
+		});
+		dirty.set(false);
+	} catch (e) {
+		console.error('Failed to save annotations:', e);
+		throw e;
+	}
 }
 
 export async function loadAnnotations(filePath: string): Promise<void> {
-	const loaded = await invoke<Annotation[]>('load_annotations', {
-		annotationPath: annotationPath(filePath)
-	});
-	annotations.set(loaded);
-	dirty.set(false);
+	try {
+		const loaded = await invoke<Annotation[]>('load_annotations', {
+			annotationPath: annotationPath(filePath)
+		});
+		annotations.set(loaded);
+		dirty.set(false);
+	} catch (e) {
+		console.error('Failed to load annotations:', e);
+		throw e;
+	}
 }

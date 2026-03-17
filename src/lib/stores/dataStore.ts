@@ -1,4 +1,4 @@
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import type {
 	VibrationDataset,
@@ -7,6 +7,7 @@ import type {
 	ColumnMapping
 } from '$lib/types/vibration';
 import type { StatisticsReport } from '$lib/types/statistics';
+import { COLOR_PALETTE } from '$lib/constants/colors';
 
 // Multi-file stores
 export const datasetOrder = writable<string[]>([]);
@@ -19,6 +20,13 @@ export const activeDatasetId = writable<string | null>(null);
 
 // CSV preview for column mapping dialog
 export const csvPreview = writable<CsvPreview | null>(null);
+
+// Per-file color overrides
+export const fileColors = writable<Record<string, string>>({});
+
+export function setFileColor(id: string, color: string): void {
+	fileColors.update((fc) => ({ ...fc, [id]: color }));
+}
 
 // UI state
 export const loading = writable(false);
@@ -67,6 +75,11 @@ export async function addFile(filePath: string, columnMapping: ColumnMapping): P
 		});
 
 		datasets.update((d) => ({ ...d, [ds.id]: ds }));
+		const colorIdx = get(datasetOrder).length;
+		fileColors.update((fc) => ({
+			...fc,
+			[ds.id]: COLOR_PALETTE[colorIdx % COLOR_PALETTE.length]
+		}));
 		datasetOrder.update((order) => [...order, ds.id]);
 		activeDatasetId.set(ds.id);
 
@@ -98,15 +111,17 @@ export function removeFile(id: string): void {
 		delete copy[id];
 		return copy;
 	});
+	fileColors.update((fc) => {
+		const copy = { ...fc };
+		delete copy[id];
+		return copy;
+	});
 	datasetOrder.update((order) => order.filter((oid) => oid !== id));
 	activeDatasetId.update((current) => {
 		if (current === id) {
 			// Switch to first remaining dataset
-			let firstId: string | null = null;
-			datasetOrder.subscribe((order) => {
-				firstId = order[0] ?? null;
-			})();
-			return firstId;
+			const order = get(datasetOrder);
+			return order[0] ?? null;
 		}
 		return current;
 	});
@@ -117,8 +132,7 @@ export async function fetchAllChunks(
 	endTime: number,
 	maxPoints: number
 ): Promise<void> {
-	let order: string[] = [];
-	datasetOrder.subscribe((o) => (order = o))();
+	const order = get(datasetOrder);
 
 	const promises = order.map((id) => fetchChunkForDataset(id, startTime, endTime, maxPoints));
 	await Promise.all(promises);

@@ -3,7 +3,9 @@
 		datasets,
 		datasetOrder,
 		activeDatasetId,
-		removeFile
+		removeFile,
+		fileColors,
+		setFileColor
 	} from '$lib/stores/dataStore';
 
 	function handleSelect(id: string) {
@@ -14,6 +16,11 @@
 		e.stopPropagation();
 		removeFile(id);
 	}
+
+	function handleColorChange(id: string, e: Event) {
+		const value = (e.target as HTMLInputElement).value;
+		setFileColor(id, value);
+	}
 </script>
 
 {#if $datasetOrder.length > 0}
@@ -21,6 +28,7 @@
 		<h3>Files ({$datasetOrder.length})</h3>
 		{#each $datasetOrder as id (id)}
 			{@const ds = $datasets[id]}
+			{@const fileColor = $fileColors[id] ?? '#5470c6'}
 			{#if ds}
 				<div
 					class="file-item"
@@ -30,6 +38,25 @@
 					onclick={() => handleSelect(id)}
 					onkeydown={(e) => e.key === 'Enter' && handleSelect(id)}
 				>
+					<button
+						type="button"
+						class="file-color-btn"
+						onclick={(e) => {
+							e.stopPropagation();
+							const input = e.currentTarget.querySelector('input');
+							input?.click();
+						}}
+						aria-label="Change file color"
+					>
+						<span class="file-color-dot" style="background: {fileColor}"></span>
+						<input
+							type="color"
+							value={fileColor}
+							onchange={(e) => handleColorChange(id, e)}
+							class="file-color-hidden"
+							tabindex="-1"
+						/>
+					</button>
 					<div class="file-info">
 						<span class="file-name">{ds.file_name}</span>
 						<span class="file-meta">{ds.total_points.toLocaleString()} pts</span>
@@ -68,6 +95,37 @@
 
 	.file-item.active {
 		background: var(--surface-active, #e0e0ff);
+	}
+
+	.file-color-btn {
+		cursor: pointer;
+		position: relative;
+		flex-shrink: 0;
+		background: none;
+		border: none;
+		padding: 0;
+	}
+
+	.file-color-dot {
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		display: block;
+		border: 2px solid rgba(0, 0, 0, 0.15);
+		transition: border-color 0.15s;
+	}
+
+	.file-color-btn:hover .file-color-dot {
+		border-color: rgba(0, 0, 0, 0.4);
+	}
+
+	.file-color-hidden {
+		position: absolute;
+		opacity: 0;
+		width: 0;
+		height: 0;
+		overflow: hidden;
+		pointer-events: none;
 	}
 
 	.file-info {

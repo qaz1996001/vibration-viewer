@@ -25,6 +25,7 @@
 	} from '$lib/stores/dataStore';
 	import {
 		addAnnotation,
+		updateAnnotation,
 		saveAnnotations,
 		loadAnnotations,
 		dirty
@@ -83,7 +84,11 @@
 	async function handleSave() {
 		const ds = $activeDataset;
 		if (ds) {
-			await saveAnnotations(ds.file_path);
+			try {
+				await saveAnnotations(ds.file_path);
+			} catch (e) {
+				error.set(`Save failed: ${e}`);
+			}
 		}
 	}
 
@@ -95,10 +100,14 @@
 			defaultPath: 'export.csv'
 		});
 		if (outputPath) {
-			await invoke('export_data', {
-				datasetId: ds.id,
-				outputPath
-			});
+			try {
+				await invoke('export_data', {
+					datasetId: ds.id,
+					outputPath
+				});
+			} catch (e) {
+				error.set(`Export failed: ${e}`);
+			}
 		}
 	}
 
@@ -114,12 +123,16 @@
 			defaultPath: 'export_viewport.csv'
 		});
 		if (outputPath) {
-			await invoke('export_data', {
-				datasetId: ds.id,
-				outputPath,
-				startTime,
-				endTime
-			});
+			try {
+				await invoke('export_data', {
+					datasetId: ds.id,
+					outputPath,
+					startTime,
+					endTime
+				});
+			} catch (e) {
+				error.set(`Export failed: ${e}`);
+			}
 		}
 	}
 
@@ -189,6 +202,10 @@
 		rangeFirstClick.set(null);
 	}
 
+	function handleUpdateAnnotation(data: { id: string; updates: Record<string, any> }) {
+		updateAnnotation(data.id, data.updates);
+	}
+
 	let activeChunk = $derived(
 		$activeDatasetId ? ($chunks[$activeDatasetId] ?? null) : null
 	);
@@ -226,6 +243,7 @@
 						ondatazoom={(data) => debouncedFetchChunks(data.start, data.end)}
 						onannotatepoint={handleAnnotatePoint}
 						onannotaterange={handleAnnotateRange}
+						onupdateannotation={handleUpdateAnnotation}
 					/>
 				</section>
 

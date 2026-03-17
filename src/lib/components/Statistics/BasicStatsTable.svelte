@@ -1,7 +1,11 @@
 <script lang="ts">
 	import type { StatisticsReport } from '$lib/types/statistics';
 
-	export let stats: StatisticsReport;
+	interface Props {
+		stats: StatisticsReport;
+	}
+
+	let { stats }: Props = $props();
 </script>
 
 <div class="stats-tables">
