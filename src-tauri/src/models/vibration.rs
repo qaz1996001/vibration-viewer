@@ -1,5 +1,5 @@
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnMapping {
@@ -27,7 +27,7 @@ pub struct VibrationDataset {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeseriesChunk {
     pub time: Vec<f64>,
-    pub channels: HashMap<String, Vec<f64>>,
+    pub channels: IndexMap<String, Vec<f64>>,
     pub is_downsampled: bool,
     pub original_count: usize,
 }

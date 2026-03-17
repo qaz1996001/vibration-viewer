@@ -1,32 +1,11 @@
 import type { EChartsOption } from 'echarts';
 import type { TimeseriesChunk, VibrationDataset } from '$lib/types/vibration';
 import type { Annotation } from '$lib/types/annotation';
+import { formatTime } from '$lib/utils/formatTime';
+import { getChannelColor } from '$lib/constants/colors';
 
-const COLOR_PALETTE = [
-	'#5470c6',
-	'#91cc75',
-	'#fac858',
-	'#ee6666',
-	'#73c0de',
-	'#3ba272',
-	'#fc8452',
-	'#9a60b4',
-	'#ea7ccc'
-];
-
-export function getChannelColor(index: number): string {
-	return COLOR_PALETTE[index % COLOR_PALETTE.length];
-}
-
-export function formatTime(epochSeconds: number): string {
-	const date = new Date(epochSeconds * 1000);
-	const MM = String(date.getMonth() + 1).padStart(2, '0');
-	const DD = String(date.getDate()).padStart(2, '0');
-	const hh = String(date.getHours()).padStart(2, '0');
-	const mm = String(date.getMinutes()).padStart(2, '0');
-	const ss = String(date.getSeconds()).padStart(2, '0');
-	return `${MM}/${DD} ${hh}:${mm}:${ss}`;
-}
+// Re-export for consumers that import from this module
+export { formatTime, getChannelColor };
 
 /**
  * Multi-file overview chart option.
@@ -43,9 +22,17 @@ export function createOverviewOption(
 		globalTimeRange?: [number, number] | null;
 		zoomStart?: number;
 		zoomEnd?: number;
+	},
+	interactionState?: {
+		legendSelected?: Record<string, boolean>;
+		fileColors?: Record<string, string>;
+		selectedAnnotationId?: string | null;
 	}
 ): EChartsOption {
 	const isMultiFile = datasetOrder.length > 1;
+	const legendSel = interactionState?.legendSelected;
+	const fColors = interactionState?.fileColors;
+	const selAnnId = interactionState?.selectedAnnotationId;
 
 	// Build markLine data: pending range first-click line
 	const markLineData: any[] = [];
@@ -57,6 +44,10 @@ export function createOverviewOption(
 		});
 	}
 
+	// Add drag-handle lines for selected range annotation
+	const handleLines = buildSelectedRangeHandles(annotations, selAnnId);
+	const allMarkLineData = [...markLineData, ...handleLines];
+
 	const series: any[] = [];
 	const legendData: string[] = [];
 	let colorIdx = 0;
@@ -67,7 +58,11 @@ export function createOverviewOption(
 		const ds = allDatasets[dsId];
 		if (!chunk || !ds) continue;
 
-		const channelNames = Object.keys(chunk.channels);
+		const fileColor = fColors?.[dsId];
+		const channelNames = ds.column_mapping.data_columns.filter(
+			(col) => col in chunk.channels
+		);
+
 		for (const channelName of channelNames) {
 			const values = chunk.channels[channelName];
 			const pairedData = chunk.time.map((t, i) => [t, values[i]]);
@@ -75,22 +70,29 @@ export function createOverviewOption(
 
 			legendData.push(seriesName);
 
+			const channelColor = fileColor ?? getChannelColor(colorIdx);
+
 			const baseSeries: any = {
 				name: seriesName,
 				type: 'line',
 				data: pairedData,
 				symbol: 'none',
 				lineStyle: { width: 1 },
-				itemStyle: { color: getChannelColor(colorIdx) }
+				itemStyle: { color: channelColor }
 			};
 
 			// First series gets annotations
 			if (firstSeries) {
-				baseSeries.markPoint = { data: buildMarkPoints(annotations, channelName) };
-				baseSeries.markArea = { data: buildMarkAreas(annotations) as any };
-				if (markLineData.length > 0) {
+				baseSeries.markPoint = {
+					data: buildMarkPoints(annotations),
+					animation: false
+				};
+				baseSeries.markArea = {
+					data: buildMarkAreas(annotations, selAnnId) as any
+				};
+				if (allMarkLineData.length > 0) {
 					baseSeries.markLine = {
-						data: markLineData,
+						data: allMarkLineData,
 						silent: true,
 						symbol: 'none',
 						animation: false
@@ -122,18 +124,22 @@ export function createOverviewOption(
 		},
 		legend: {
 			data: legendData,
-			type: legendData.length > 6 ? 'scroll' : 'plain'
+			type: legendData.length > 6 ? 'scroll' : 'plain',
+			bottom: 0,
+			...(legendSel ? { selected: legendSel } : {})
 		},
 		toolbox: {
 			feature: {
 				dataZoom: { title: { zoom: 'Box Zoom', back: 'Undo Zoom' } },
 				restore: { title: 'Reset' }
 			},
-			right: 20
+			right: 20,
+
 		},
 		grid: {
 			left: '3%',
 			right: '4%',
+			top: 60,
 			bottom: '15%',
 			containLabel: true
 		},
@@ -142,11 +148,13 @@ export function createOverviewOption(
 				type: 'slider',
 				xAxisIndex: 0,
 				start: zoomOptions?.zoomStart ?? 0,
-				end: zoomOptions?.zoomEnd ?? 100
+				end: zoomOptions?.zoomEnd ?? 100,
+				bottom: '8%',
 			},
 			{ type: 'inside', xAxisIndex: 0 }
 		],
 		xAxis: {
+
 			type: 'value',
 			name: 'Time',
 			axisLabel: {
@@ -236,30 +244,54 @@ export function createSingleAxisOption(
 	};
 }
 
-function buildMarkPoints(
-	annotations: Annotation[],
-	axis: string
-): Array<{ coord: [number, number]; name: string }> {
+/** Map a single Point annotation to ECharts markPoint data format. */
+function mapPointToMarkData(a: Annotation) {
+	const pt = a.annotation_type as { type: 'Point'; time: number; value: number; axis: string };
+	return {
+		coord: [pt.time, pt.value] as [number, number],
+		name: a.label,
+		symbol: 'pin',
+		symbolSize: 30,
+		itemStyle: {
+			color: a.color,
+			borderColor: '#fff',
+			borderWidth: 2,
+			shadowBlur: 4,
+			shadowColor: 'rgba(0,0,0,0.3)'
+		},
+		label: {
+			show: true,
+			formatter: a.label,
+			offset: [a.label_offset_x, a.label_offset_y],
+			backgroundColor: 'rgba(255,255,255,0.9)',
+			borderColor: a.color,
+			borderWidth: 1,
+			borderRadius: 4,
+			padding: [4, 8],
+			color: '#333',
+			fontSize: 12
+		}
+	};
+}
+
+/** Overview chart: show ALL point annotations (no axis filter). */
+function buildMarkPoints(annotations: Annotation[]): any[] {
+	return annotations
+		.filter((a) => a.annotation_type.type === 'Point')
+		.map(mapPointToMarkData);
+}
+
+/** For SingleAxisChart: filter by specific channel axis. */
+export function buildMarkPointsForAxis(annotations: Annotation[], axis: string): any[] {
 	return annotations
 		.filter((a) => a.annotation_type.type === 'Point' && a.annotation_type.axis === axis)
-		.map((a) => {
-			const pt = a.annotation_type as { type: 'Point'; time: number; value: number; axis: string };
-			return {
-				coord: [pt.time, pt.value] as [number, number],
-				name: a.label,
-				itemStyle: { color: a.color },
-				label: {
-					show: true,
-					formatter: a.label,
-					offset: [a.label_offset_x, a.label_offset_y]
-				}
-			};
-		});
+		.map(mapPointToMarkData);
 }
 
 function buildMarkAreas(
-	annotations: Annotation[]
-): Array<[{ xAxis: number; name: string }, { xAxis: number }]> {
+	annotations: Annotation[],
+	selectedId?: string | null
+): Array<[any, any]> {
 	return annotations
 		.filter((a) => a.annotation_type.type === 'Range')
 		.map((a) => {
@@ -268,14 +300,44 @@ function buildMarkAreas(
 				start_time: number;
 				end_time: number;
 			};
+			const isSelected = a.id === selectedId;
 			return [
 				{
 					xAxis: range.start_time,
 					name: a.label,
-					itemStyle: { color: a.color, opacity: 0.3 },
+					itemStyle: {
+						color: a.color,
+						opacity: isSelected ? 0.4 : 0.2
+					},
 					label: { show: true, position: 'insideTop' }
 				},
 				{ xAxis: range.end_time }
 			];
 		});
+}
+
+function buildSelectedRangeHandles(
+	annotations: Annotation[],
+	selectedId: string | null | undefined
+): any[] {
+	if (!selectedId) return [];
+	const ann = annotations.find((a) => a.id === selectedId);
+	if (!ann || ann.annotation_type.type !== 'Range') return [];
+	const range = ann.annotation_type as {
+		type: 'Range';
+		start_time: number;
+		end_time: number;
+	};
+	return [
+		{
+			xAxis: range.start_time,
+			lineStyle: { color: ann.color, width: 4, type: 'solid' },
+			label: { show: true, formatter: '◂', position: 'start', color: ann.color, fontSize: 14 }
+		},
+		{
+			xAxis: range.end_time,
+			lineStyle: { color: ann.color, width: 4, type: 'solid' },
+			label: { show: true, formatter: '▸', position: 'start', color: ann.color, fontSize: 14 }
+		}
+	];
 }

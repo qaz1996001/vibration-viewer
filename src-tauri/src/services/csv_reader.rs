@@ -1,20 +1,23 @@
 use polars::prelude::*;
 use std::path::Path;
 
+use crate::error::AppError;
 use crate::models::vibration::{ColumnMapping, CsvPreview};
 
 /// Preview CSV file: read headers and row count only.
-pub fn preview_csv(file_path: &str) -> Result<CsvPreview, String> {
+pub fn preview_csv(file_path: &str) -> Result<CsvPreview, AppError> {
     let path = Path::new(file_path);
     if !path.exists() {
-        return Err(format!("File not found: {}", file_path));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("File not found: {}", file_path),
+        )
+        .into());
     }
 
     let df = CsvReadOptions::default()
-        .try_into_reader_with_file_path(Some(path.into()))
-        .map_err(|e| format!("Cannot create CSV reader: {}", e))?
-        .finish()
-        .map_err(|e| format!("CSV parse failed: {}", e))?;
+        .try_into_reader_with_file_path(Some(path.into()))?
+        .finish()?;
 
     let columns: Vec<String> = df
         .get_column_names()
@@ -33,30 +36,35 @@ pub fn preview_csv(file_path: &str) -> Result<CsvPreview, String> {
 /// Read CSV with user-specified column mapping.
 /// Parses the time column (string datetime / datetime / numeric) to epoch seconds.
 /// Casts all data columns to Float64.
-pub fn read_csv_with_mapping(file_path: &str, mapping: &ColumnMapping) -> Result<DataFrame, String> {
+pub fn read_csv_with_mapping(
+    file_path: &str,
+    mapping: &ColumnMapping,
+) -> Result<DataFrame, AppError> {
     let path = Path::new(file_path);
     if !path.exists() {
-        return Err(format!("File not found: {}", file_path));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("File not found: {}", file_path),
+        )
+        .into());
     }
 
     let df = CsvReadOptions::default()
-        .try_into_reader_with_file_path(Some(path.into()))
-        .map_err(|e| format!("Cannot create CSV reader: {}", e))?
-        .finish()
-        .map_err(|e| format!("CSV parse failed: {}", e))?;
+        .try_into_reader_with_file_path(Some(path.into()))?
+        .finish()?;
 
     // Validate columns exist
     let time_col = &mapping.time_column;
     if df.column(time_col).is_err() {
-        return Err(format!("Time column not found: {}", time_col));
+        return Err(AppError::ColumnNotFound(time_col.clone()));
     }
     for col_name in &mapping.data_columns {
         if df.column(col_name).is_err() {
-            return Err(format!("Data column not found: {}", col_name));
+            return Err(AppError::ColumnNotFound(col_name.clone()));
         }
     }
 
-    let time_dtype = df.column(time_col).unwrap().dtype().clone();
+    let time_dtype = df.column(time_col)?.dtype().clone();
     let mut lazy = df.lazy();
 
     // Convert time column to Float64 (epoch seconds)
@@ -89,11 +97,11 @@ pub fn read_csv_with_mapping(file_path: &str, mapping: &ColumnMapping) -> Result
         }
     }
 
-    // Cast data columns to Float64 and fill nulls with 0.0
+    // Cast data columns to Float64 (keep nulls as null — do NOT fill with 0.0)
     let data_casts: Vec<Expr> = mapping
         .data_columns
         .iter()
-        .map(|c| col(c).cast(DataType::Float64).fill_null(lit(0.0)))
+        .map(|c| col(c).cast(DataType::Float64))
         .collect();
     if !data_casts.is_empty() {
         lazy = lazy.with_columns(data_casts);
@@ -109,6 +117,5 @@ pub fn read_csv_with_mapping(file_path: &str, mapping: &ColumnMapping) -> Result
     }
     lazy = lazy.select(select_cols);
 
-    lazy.collect()
-        .map_err(|e| format!("Failed to process columns: {}", e))
+    Ok(lazy.collect()?)
 }

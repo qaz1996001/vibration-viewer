@@ -8,6 +8,13 @@ pub fn lttb(time: &[f64], values: &[f64], threshold: usize) -> (Vec<f64>, Vec<f6
     (sampled_time, sampled_values)
 }
 
+/// NOTE: This function uses a single representative channel for index selection.
+/// The selected indices are then applied to ALL channels. This means a spike in
+/// channel Z that doesn't appear in the representative channel may be missed in
+/// the downsampled output. This is an intentional tradeoff for simplicity —
+/// multi-channel LTTB (union of per-channel indices) can be added if users
+/// report missing peaks in specific channels.
+///
 /// LTTB that returns selected indices instead of values.
 /// Use one representative channel for index selection, then apply indices to all channels.
 pub fn lttb_indices(time: &[f64], values: &[f64], threshold: usize) -> Vec<usize> {

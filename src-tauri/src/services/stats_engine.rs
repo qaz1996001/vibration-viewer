@@ -45,9 +45,19 @@ pub fn compute_distribution_stats(series: &Series, axis_name: &str) -> AxisDistr
 
 pub fn compute_shape_stats(series: &Series, axis_name: &str) -> AxisShapeStats {
     let mean = series.mean().unwrap_or(0.0);
-    let std_dev = series.std(1).unwrap_or(1.0);
+    let std_dev = series.std(1).unwrap_or(0.0);
     let n = series.len() as f64;
 
+    // Guard: constant series has zero skewness and kurtosis
+    if std_dev < f64::EPSILON || n < 3.0 {
+        return AxisShapeStats {
+            axis: axis_name.to_string(),
+            skewness: 0.0,
+            kurtosis: 0.0,
+        };
+    }
+
+    // Safety: caller validates column is f64 before calling
     let ca = series.f64().unwrap();
     let mut sum3 = 0.0;
     let mut sum4 = 0.0;
@@ -59,7 +69,7 @@ pub fn compute_shape_stats(series: &Series, axis_name: &str) -> AxisShapeStats {
     }
 
     let skewness = sum3 / n;
-    let kurtosis = (sum4 / n) - 3.0; // excess kurtosis
+    let kurtosis = (sum4 / n) - 3.0;
 
     AxisShapeStats {
         axis: axis_name.to_string(),
@@ -69,6 +79,7 @@ pub fn compute_shape_stats(series: &Series, axis_name: &str) -> AxisShapeStats {
 }
 
 fn percentile(sorted_series: &Series, pct: f64) -> f64 {
+    // Safety: caller validates column is f64 before calling
     let ca = sorted_series.f64().unwrap();
     let n = ca.len();
     if n == 0 {

@@ -1,14 +1,16 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::path::Path;
 use tauri::State;
 use uuid::Uuid;
+use polars::prelude::*;
 
+use crate::error::AppError;
 use crate::models::vibration::*;
 use crate::services::{csv_reader, downsampling};
 use crate::state::{AppState, DatasetEntry};
 
 #[tauri::command]
-pub fn preview_csv_columns(file_path: String) -> Result<CsvPreview, String> {
+pub fn preview_csv_columns(file_path: String) -> Result<CsvPreview, AppError> {
     csv_reader::preview_csv(&file_path)
 }
 
@@ -17,15 +19,13 @@ pub fn load_vibration_data(
     file_path: String,
     column_mapping: ColumnMapping,
     state: State<AppState>,
-) -> Result<VibrationDataset, String> {
+) -> Result<VibrationDataset, AppError> {
     let df = csv_reader::read_csv_with_mapping(&file_path, &column_mapping)?;
 
-    let time_col = df.column("time").map_err(|e| e.to_string())?;
-    let time_ca = time_col.f64().map_err(|e| e.to_string())?;
+    let time_col = df.column("time")?.f64()?;
     let total_points = df.height();
-    let time_vec: Vec<f64> = time_ca.into_no_null_iter().collect();
-    let time_min = time_vec.iter().cloned().reduce(f64::min).unwrap_or(0.0);
-    let time_max = time_vec.iter().cloned().reduce(f64::max).unwrap_or(0.0);
+    let time_min = time_col.min().unwrap_or(0.0);
+    let time_max = time_col.max().unwrap_or(0.0);
 
     let id = Uuid::new_v4().to_string();
     let file_name = Path::new(&file_path)
@@ -42,7 +42,7 @@ pub fn load_vibration_data(
         column_mapping,
     };
 
-    let mut datasets = state.datasets.lock().unwrap();
+    let mut datasets = state.datasets.write().unwrap_or_else(|p| p.into_inner());
     datasets.insert(
         id,
         DatasetEntry {
@@ -61,40 +61,40 @@ pub fn get_timeseries_chunk(
     end_time: f64,
     max_points: usize,
     state: State<AppState>,
-) -> Result<TimeseriesChunk, String> {
-    let datasets = state.datasets.lock().unwrap();
-    let entry = datasets.get(&dataset_id).ok_or("Dataset not found")?;
+) -> Result<TimeseriesChunk, AppError> {
+    let datasets = state.datasets.read().unwrap_or_else(|p| p.into_inner());
+    let entry = datasets
+        .get(&dataset_id)
+        .ok_or_else(|| AppError::DatasetNotFound(dataset_id.clone()))?;
     let df = &entry.dataframe;
     let data_columns = &entry.metadata.column_mapping.data_columns;
 
-    // Filter by time range
-    let mask = df
-        .column("time")
-        .unwrap()
-        .f64()
-        .unwrap()
-        .into_iter()
-        .map(|opt| opt.is_some_and(|t| t >= start_time && t <= end_time))
-        .collect::<polars::prelude::BooleanChunked>();
-
-    let filtered = df.filter(&mask).map_err(|e| e.to_string())?;
+    // Filter by time range using Polars lazy filter (SIMD-accelerated)
+    let filtered = df
+        .clone()
+        .lazy()
+        .filter(
+            col("time")
+                .gt_eq(lit(start_time))
+                .and(col("time").lt_eq(lit(end_time))),
+        )
+        .collect()?;
     let original_count = filtered.height();
 
-    let time_raw = extract_f64_vec(&filtered, "time");
+    let time_raw = extract_f64_vec(&filtered, "time")?;
 
     if original_count > max_points {
-        // Use first data column as representative for LTTB index selection
         let representative = if !data_columns.is_empty() {
-            extract_f64_vec(&filtered, &data_columns[0])
+            extract_f64_vec(&filtered, &data_columns[0])?
         } else {
             vec![0.0; time_raw.len()]
         };
         let indices = downsampling::lttb_indices(&time_raw, &representative, max_points);
 
         let time: Vec<f64> = indices.iter().map(|&i| time_raw[i]).collect();
-        let mut channels = HashMap::new();
+        let mut channels = IndexMap::new();
         for col_name in data_columns {
-            let raw = extract_f64_vec(&filtered, col_name);
+            let raw = extract_f64_vec(&filtered, col_name)?;
             let sampled: Vec<f64> = indices.iter().map(|&i| raw[i]).collect();
             channels.insert(col_name.clone(), sampled);
         }
@@ -106,9 +106,9 @@ pub fn get_timeseries_chunk(
             original_count,
         })
     } else {
-        let mut channels = HashMap::new();
+        let mut channels = IndexMap::new();
         for col_name in data_columns {
-            channels.insert(col_name.clone(), extract_f64_vec(&filtered, col_name));
+            channels.insert(col_name.clone(), extract_f64_vec(&filtered, col_name)?);
         }
 
         Ok(TimeseriesChunk {
@@ -120,11 +120,11 @@ pub fn get_timeseries_chunk(
     }
 }
 
-fn extract_f64_vec(df: &polars::prelude::DataFrame, col_name: &str) -> Vec<f64> {
-    df.column(col_name)
-        .unwrap()
-        .f64()
-        .unwrap()
-        .into_no_null_iter()
-        .collect()
+fn extract_f64_vec(df: &DataFrame, col_name: &str) -> Result<Vec<f64>, AppError> {
+    Ok(df
+        .column(col_name)?
+        .f64()?
+        .into_iter()
+        .map(|opt| opt.unwrap_or(f64::NAN))
+        .collect())
 }
