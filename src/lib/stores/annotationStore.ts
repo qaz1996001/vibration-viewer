@@ -31,23 +31,24 @@ export function removeAnnotation(id: string): void {
 	dirty.set(true);
 }
 
-export function updateAnnotation(id: string, updates: Partial<Annotation>): void {
-	annotations.update((list) => list.map((a) => (a.id === id ? { ...a, ...updates } : a)));
-	dirty.set(true);
+/** Derive annotation file path from a data file path */
+export function annotationPath(filePath: string): string {
+	return filePath + '.vibann.json';
 }
 
-export async function saveAnnotations(datasetId: string, filePath: string): Promise<void> {
+export async function saveAnnotations(filePath: string): Promise<void> {
 	const current = get(annotations);
 	await invoke('save_annotations', {
-		datasetId,
-		filePath,
+		annotationPath: annotationPath(filePath),
 		annotations: current
 	});
 	dirty.set(false);
 }
 
 export async function loadAnnotations(filePath: string): Promise<void> {
-	const loaded = await invoke<Annotation[]>('load_annotations', { filePath });
+	const loaded = await invoke<Annotation[]>('load_annotations', {
+		annotationPath: annotationPath(filePath)
+	});
 	annotations.set(loaded);
 	dirty.set(false);
 }

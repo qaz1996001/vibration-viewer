@@ -28,6 +28,6 @@ pub struct Annotation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnnotationFile {
     pub version: u32,
-    pub dataset_id: String,
+    pub dataset_id: Option<String>,
     pub annotations: Vec<Annotation>,
 }

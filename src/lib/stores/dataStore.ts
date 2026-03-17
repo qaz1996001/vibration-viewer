@@ -1,27 +1,79 @@
-import { writable } from 'svelte/store';
+import { writable, derived } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
-import type { VibrationDataset, TimeseriesChunk } from '$lib/types/vibration';
+import type {
+	VibrationDataset,
+	TimeseriesChunk,
+	CsvPreview,
+	ColumnMapping
+} from '$lib/types/vibration';
 import type { StatisticsReport } from '$lib/types/statistics';
 
-export const dataset = writable<VibrationDataset | null>(null);
-export const chunk = writable<TimeseriesChunk | null>(null);
-export const statistics = writable<StatisticsReport | null>(null);
+// Multi-file stores
+export const datasetOrder = writable<string[]>([]);
+export const datasets = writable<Record<string, VibrationDataset>>({});
+export const chunks = writable<Record<string, TimeseriesChunk>>({});
+export const statistics = writable<Record<string, StatisticsReport>>({});
+
+// Active dataset (for stats display, single-axis charts)
+export const activeDatasetId = writable<string | null>(null);
+
+// CSV preview for column mapping dialog
+export const csvPreview = writable<CsvPreview | null>(null);
+
+// UI state
 export const loading = writable(false);
 export const error = writable<string | null>(null);
 
-export async function loadFile(filePath: string): Promise<void> {
+// Derived: global time range across all datasets
+export const globalTimeRange = derived(datasets, ($datasets) => {
+	const ids = Object.keys($datasets);
+	if (ids.length === 0) return null;
+	let min = Infinity;
+	let max = -Infinity;
+	for (const id of ids) {
+		const ds = $datasets[id];
+		if (ds.time_range[0] < min) min = ds.time_range[0];
+		if (ds.time_range[1] > max) max = ds.time_range[1];
+	}
+	return [min, max] as [number, number];
+});
+
+// Derived: active dataset
+export const activeDataset = derived(
+	[activeDatasetId, datasets],
+	([$activeId, $datasets]) => ($activeId ? $datasets[$activeId] ?? null : null)
+);
+
+// Derived: active statistics
+export const activeStatistics = derived(
+	[activeDatasetId, statistics],
+	([$activeId, $statistics]) => ($activeId ? $statistics[$activeId] ?? null : null)
+);
+
+export async function previewFile(filePath: string): Promise<CsvPreview> {
+	const preview = await invoke<CsvPreview>('preview_csv_columns', { filePath });
+	csvPreview.set(preview);
+	return preview;
+}
+
+export async function addFile(filePath: string, columnMapping: ColumnMapping): Promise<void> {
 	loading.set(true);
 	error.set(null);
 
 	try {
 		const ds = await invoke<VibrationDataset>('load_vibration_data', {
-			filePath
+			filePath,
+			columnMapping
 		});
-		dataset.set(ds);
 
+		datasets.update((d) => ({ ...d, [ds.id]: ds }));
+		datasetOrder.update((order) => [...order, ds.id]);
+		activeDatasetId.set(ds.id);
+
+		// Fetch chunk and stats for new dataset
 		await Promise.all([
-			fetchChunk(ds.id, ds.time_range[0], ds.time_range[1], 50000),
-			fetchStatistics(ds.id)
+			fetchChunkForDataset(ds.id, ds.time_range[0], ds.time_range[1], 50000),
+			fetchStatisticsForDataset(ds.id)
 		]);
 	} catch (e) {
 		error.set(String(e));
@@ -30,7 +82,49 @@ export async function loadFile(filePath: string): Promise<void> {
 	}
 }
 
-export async function fetchChunk(
+export function removeFile(id: string): void {
+	datasets.update((d) => {
+		const copy = { ...d };
+		delete copy[id];
+		return copy;
+	});
+	chunks.update((c) => {
+		const copy = { ...c };
+		delete copy[id];
+		return copy;
+	});
+	statistics.update((s) => {
+		const copy = { ...s };
+		delete copy[id];
+		return copy;
+	});
+	datasetOrder.update((order) => order.filter((oid) => oid !== id));
+	activeDatasetId.update((current) => {
+		if (current === id) {
+			// Switch to first remaining dataset
+			let firstId: string | null = null;
+			datasetOrder.subscribe((order) => {
+				firstId = order[0] ?? null;
+			})();
+			return firstId;
+		}
+		return current;
+	});
+}
+
+export async function fetchAllChunks(
+	startTime: number,
+	endTime: number,
+	maxPoints: number
+): Promise<void> {
+	let order: string[] = [];
+	datasetOrder.subscribe((o) => (order = o))();
+
+	const promises = order.map((id) => fetchChunkForDataset(id, startTime, endTime, maxPoints));
+	await Promise.all(promises);
+}
+
+async function fetchChunkForDataset(
 	datasetId: string,
 	startTime: number,
 	endTime: number,
@@ -43,18 +137,18 @@ export async function fetchChunk(
 			endTime,
 			maxPoints
 		});
-		chunk.set(c);
+		chunks.update((ch) => ({ ...ch, [datasetId]: c }));
 	} catch (e) {
 		error.set(String(e));
 	}
 }
 
-async function fetchStatistics(datasetId: string): Promise<void> {
+async function fetchStatisticsForDataset(datasetId: string): Promise<void> {
 	try {
 		const stats = await invoke<StatisticsReport>('compute_statistics', {
 			datasetId
 		});
-		statistics.set(stats);
+		statistics.update((s) => ({ ...s, [datasetId]: stats }));
 	} catch (e) {
 		error.set(String(e));
 	}

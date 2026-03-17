@@ -4,45 +4,62 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Vibration time-series annotation tool built with **Tauri + Svelte + ECharts** (Option C). Replaces a Bokeh Python dashboard (`res/device3_vibration_dashboard.html`) with a native desktop app that adds interactive annotation capabilities for vibration data (X/Y/Z axes).
+Vibration time-series annotation tool built with **Tauri 2 + SvelteKit + ECharts 6 + Polars** (Option C). Replaces a Bokeh Python dashboard (`res/device3_vibration_dashboard.html`) with a native desktop app that adds interactive annotation capabilities for vibration data.
 
-**Status:** Pre-implementation (design phase complete, no application code yet).
+**Status:** Multi-file + dynamic CSV columns implemented. In refinement phase.
 
 ## Architecture
 
-**Rust backend** (`src-tauri/`): CSV/data I/O via polars, LTTB downsampling, statistics computation, annotation persistence (JSON files).
+**Rust backend** (`src-tauri/src/`):
+- `commands/` — 7 IPC endpoints: `data.rs` (preview_csv_columns, load_vibration_data, get_timeseries_chunk), `statistics.rs`, `annotation.rs`, `export.rs`
+- `models/` — `vibration.rs` (ColumnMapping, CsvPreview, VibrationDataset, TimeseriesChunk with HashMap channels), `annotation.rs`, `statistics.rs`
+- `services/` — `csv_reader.rs` (preview_csv + read_csv_with_mapping), `downsampling.rs` (lttb_indices), `stats_engine.rs`
+- `state.rs` — `AppState` with `Mutex<HashMap<id, DatasetEntry>>`
+- `lib.rs` — Tauri builder entry point
 
-**Svelte frontend** (`src/`): ECharts for time-series rendering (markPoint/markArea/brush for annotations, dataZoom for navigation), Svelte stores for state management.
+**Svelte frontend** (`src/lib/`):
+- `components/Chart/` — `TimeseriesChart.svelte`, `SingleAxisChart.svelte`, `chartOptions.ts`
+- `components/Annotation/` — `AnnotationPanel.svelte`
+- `components/ColumnMapping/` — `ColumnMappingDialog.svelte`
+- `components/DataTable/` — `ViewportDataTable.svelte`
+- `components/Statistics/` — `BasicStatsTable.svelte`
+- `components/Layout/` — `Toolbar.svelte`, `FileList.svelte`
+- `stores/` — `dataStore.ts` (multi-file: datasets/chunks/statistics maps), `annotationStore.ts`, `modeStore.ts`, `viewStore.ts`
+- `types/` — `vibration.ts` (ColumnMapping, CsvPreview, channels: Record<string,number[]>), `annotation.ts`, `statistics.ts`
+- `utils/` — `debounce.ts`
 
-**IPC:** 6 Tauri commands — `load_vibration_data`, `get_timeseries_chunk`, `compute_statistics`, `save_annotations`, `load_annotations`, `export_data`.
+**IPC:** 7 Tauri commands — `preview_csv_columns`, `load_vibration_data` (accepts ColumnMapping), `get_timeseries_chunk`, `compute_statistics`, `save_annotations`, `load_annotations`, `export_data`.
 
-Detailed design in `docs/system-design.md` (data models, directory structure, data flows) and `docs/program-design.md` (implementation code).
-
-## Build & Development (once scaffolded)
+## Build & Development
 
 ```bash
-# Frontend
-npm install
-npm run dev          # Svelte dev server
+cargo tauri dev                              # Dev mode (frontend + backend)
+cargo tauri build                            # Production build
 
-# Tauri (runs both frontend + Rust backend)
-cargo tauri dev      # Development mode
-cargo tauri build    # Production build
-
-# Rust checks
-cd src-tauri
-cargo fmt
-cargo clippy -- -D warnings
-cargo test
+# Checks
+cd src-tauri && cargo clippy -- -D warnings  # Rust lint
+cd src-tauri && cargo test                   # Rust tests
+npx svelte-check                             # Svelte/TS check
 ```
 
 ## Key Design Decisions
 
-- **Annotation storage:** JSON files (`{datafile}.vibann.json`), not SQLite — YAGNI
-- **Downsampling:** LTTB algorithm in Rust, cap frontend at 50K points
+- **Multi-file overlay:** Multiple CSVs on same chart with time-aligned value axis (epoch seconds)
+- **Dynamic CSV columns:** User maps columns via ColumnMappingDialog after opening file; no hardcoded x/y/z
+- **TimeseriesChunk.channels:** `HashMap<String, Vec<f64>>` instead of fixed x/y/z/amplitude fields
+- **Two-step file open:** preview_csv_columns → ColumnMappingDialog → load_vibration_data with mapping
+- **Value axis:** xAxis type='value' (epoch seconds) enables multi-file time alignment
+- **LTTB index-based:** `lttb_indices` returns indices, applies to all channels for aligned downsampling
+- **Annotation storage:** JSON files (`{datafile}.vibann.json`), frontend derives path
+- **Downsampling:** LTTB algorithm in Rust, cap frontend at 50K points per dataset
 - **Operation modes:** browse / annotate_point / annotate_range (avoids brush/pan conflicts)
-- **State:** Svelte stores (dataStore, annotationStore, viewStore, modeStore)
-- **Zoom-fetch:** dataZoom events debounced 300ms, triggers new chunk from Rust
+- **State:** Multi-file stores (datasets, chunks, statistics as Record maps), activeDatasetId for single-axis views
+- **Zoom-fetch:** dataZoom events debounced 300ms, triggers fetchAllChunks for all loaded datasets
+
+## Known Issues
+
+- Point annotations assigned to first data column of active dataset
+- Label offset drag UI not yet implemented (data model supports it)
 
 ## Design Documents
 

@@ -2,18 +2,26 @@
 	import { open, save } from '@tauri-apps/plugin-dialog';
 	import { invoke } from '@tauri-apps/api/core';
 	import TimeseriesChart from '$lib/components/Chart/TimeseriesChart.svelte';
+	import SingleAxisChart from '$lib/components/Chart/SingleAxisChart.svelte';
 	import AnnotationPanel from '$lib/components/Annotation/AnnotationPanel.svelte';
-	import AnnotationDialog from '$lib/components/Annotation/AnnotationDialog.svelte';
 	import BasicStatsTable from '$lib/components/Statistics/BasicStatsTable.svelte';
+	import ViewportDataTable from '$lib/components/DataTable/ViewportDataTable.svelte';
+	import ColumnMappingDialog from '$lib/components/ColumnMapping/ColumnMappingDialog.svelte';
+	import FileList from '$lib/components/Layout/FileList.svelte';
 	import Toolbar from '$lib/components/Layout/Toolbar.svelte';
 	import {
-		dataset,
-		chunk,
-		statistics,
+		datasetOrder,
+		datasets,
+		chunks,
+		activeDataset,
+		activeStatistics,
+		globalTimeRange,
+		activeDatasetId,
 		loading,
 		error,
-		loadFile,
-		fetchChunk
+		previewFile,
+		addFile,
+		fetchAllChunks
 	} from '$lib/stores/dataStore';
 	import {
 		addAnnotation,
@@ -21,75 +29,142 @@
 		loadAnnotations,
 		dirty
 	} from '$lib/stores/annotationStore';
-	import { mode } from '$lib/stores/modeStore';
+	import { mode, rangeFirstClick } from '$lib/stores/modeStore';
+	import { precision, getMaxPoints } from '$lib/stores/viewStore';
 	import { debounce } from '$lib/utils/debounce';
+	import type { ColumnMapping, CsvPreview } from '$lib/types/vibration';
 
-	let showAnnotationDialog = false;
-	let pendingAnnotation: { type: 'point' | 'range'; data: any } | null = null;
+	let pendingAnnotation: { type: 'point' | 'range'; data: any } | null = $state(null);
+	let currentZoomStart = $state(0);
+	let currentZoomEnd = $state(100);
+	let showMappingDialog = $state(false);
+	let currentPreview: CsvPreview | null = $state(null);
+	let pendingFilePaths: string[] = $state([]);
 
 	async function handleOpenFile() {
-		const filePath = await open({
+		const selected = await open({
+			multiple: true,
 			filters: [{ name: 'CSV', extensions: ['csv'] }]
 		});
-		if (filePath) {
-			await loadFile(filePath as string);
-			await loadAnnotations(filePath as string);
+		if (!selected) return;
+
+		const paths = Array.isArray(selected) ? selected : [selected];
+		if (paths.length === 0) return;
+
+		try {
+			// Preview first file for column mapping; same mapping applied to all
+			const preview = await previewFile(paths[0]);
+			currentPreview = preview;
+			pendingFilePaths = paths;
+			showMappingDialog = true;
+		} catch (e) {
+			error.set(String(e));
 		}
 	}
 
+	async function handleMappingConfirm(mapping: ColumnMapping) {
+		showMappingDialog = false;
+		const paths = pendingFilePaths;
+		pendingFilePaths = [];
+		currentPreview = null;
+
+		for (const filePath of paths) {
+			await addFile(filePath, mapping);
+			await loadAnnotations(filePath);
+		}
+	}
+
+	function handleMappingCancel() {
+		showMappingDialog = false;
+		pendingFilePaths = [];
+		currentPreview = null;
+	}
+
 	async function handleSave() {
-		if ($dataset) {
-			await saveAnnotations($dataset.id, $dataset.file_path);
+		const ds = $activeDataset;
+		if (ds) {
+			await saveAnnotations(ds.file_path);
 		}
 	}
 
 	async function handleExport() {
-		if (!$dataset) return;
+		const ds = $activeDataset;
+		if (!ds) return;
 		const outputPath = await save({
 			filters: [{ name: 'CSV', extensions: ['csv'] }],
 			defaultPath: 'export.csv'
 		});
 		if (outputPath) {
 			await invoke('export_data', {
-				datasetId: $dataset.id,
+				datasetId: ds.id,
 				outputPath
 			});
 		}
 	}
 
-	const debouncedFetchChunk = debounce((start: number, end: number) => {
-		if (!$dataset) return;
-		const range = $dataset.time_range;
+	async function handleExportViewport() {
+		const ds = $activeDataset;
+		if (!ds) return;
+		const range = $globalTimeRange;
+		if (!range) return;
+		const startTime = range[0] + (currentZoomStart / 100) * (range[1] - range[0]);
+		const endTime = range[0] + (currentZoomEnd / 100) * (range[1] - range[0]);
+		const outputPath = await save({
+			filters: [{ name: 'CSV', extensions: ['csv'] }],
+			defaultPath: 'export_viewport.csv'
+		});
+		if (outputPath) {
+			await invoke('export_data', {
+				datasetId: ds.id,
+				outputPath,
+				startTime,
+				endTime
+			});
+		}
+	}
+
+	const debouncedFetchChunks = debounce((start: number, end: number) => {
+		const range = $globalTimeRange;
+		if (!range) return;
+		currentZoomStart = start;
+		currentZoomEnd = end;
 		const startTime = range[0] + (start / 100) * (range[1] - range[0]);
 		const endTime = range[0] + (end / 100) * (range[1] - range[0]);
-		fetchChunk($dataset.id, startTime, endTime, 50000);
+		const maxPts = getMaxPoints($precision);
+		fetchAllChunks(startTime, endTime, maxPts > 0 ? maxPts : Number.MAX_SAFE_INTEGER);
 	}, 300);
 
-	function handleDataZoom(event: CustomEvent<{ start: number; end: number }>) {
-		debouncedFetchChunk(event.detail.start, event.detail.end);
+	// Re-fetch when precision changes
+	$effect(() => {
+		const level = $precision;
+		const range = $globalTimeRange;
+		const order = $datasetOrder;
+		if (!range || order.length === 0) return;
+		const startTime = range[0] + (currentZoomStart / 100) * (range[1] - range[0]);
+		const endTime = range[0] + (currentZoomEnd / 100) * (range[1] - range[0]);
+		const maxPts = getMaxPoints(level);
+		fetchAllChunks(startTime, endTime, maxPts > 0 ? maxPts : Number.MAX_SAFE_INTEGER);
+	});
+
+	function handleAnnotatePoint(data: { time: number; value: number }) {
+		pendingAnnotation = { type: 'point', data };
 	}
 
-	function handleAnnotatePoint(event: CustomEvent<{ time: number; value: number }>) {
-		pendingAnnotation = { type: 'point', data: event.detail };
-		showAnnotationDialog = true;
+	function handleAnnotateRange(data: { startTime: number; endTime: number }) {
+		pendingAnnotation = { type: 'range', data };
 	}
 
-	function handleAnnotateRange(event: CustomEvent<{ startTime: number; endTime: number }>) {
-		pendingAnnotation = { type: 'range', data: event.detail };
-		showAnnotationDialog = true;
-	}
-
-	function handleAnnotationConfirm(event: CustomEvent<{ label: string; color: string }>) {
+	function handleAnnotationConfirm(detail: { label: string; color: string }) {
 		if (!pendingAnnotation) return;
 
-		const { label, color } = event.detail;
+		const { label, color } = detail;
 		if (pendingAnnotation.type === 'point') {
 			addAnnotation(
 				{
 					type: 'Point',
 					time: pendingAnnotation.data.time,
 					value: pendingAnnotation.data.value,
-					axis: 'x'
+					axis: $activeDataset?.column_mapping.data_columns[0] ?? 'x'
 				},
 				label,
 				color
@@ -106,13 +181,37 @@
 			);
 		}
 
-		showAnnotationDialog = false;
 		pendingAnnotation = null;
 	}
+
+	function handleAnnotationCancel() {
+		pendingAnnotation = null;
+		rangeFirstClick.set(null);
+	}
+
+	let activeChunk = $derived(
+		$activeDatasetId ? ($chunks[$activeDatasetId] ?? null) : null
+	);
+	let dataColumns = $derived($activeDataset?.column_mapping.data_columns ?? []);
+	let hasData = $derived($datasetOrder.length > 0);
 </script>
 
+{#if showMappingDialog && currentPreview}
+	<ColumnMappingDialog
+		preview={currentPreview}
+		onconfirm={handleMappingConfirm}
+		oncancel={handleMappingCancel}
+	/>
+{/if}
+
 <main class="app-layout">
-	<Toolbar on:open-file={handleOpenFile} on:save={handleSave} on:export={handleExport} hasUnsaved={$dirty} />
+	<Toolbar
+		onopenfile={handleOpenFile}
+		onsave={handleSave}
+		onexport={handleExport}
+		onexportviewport={handleExportViewport}
+		hasUnsaved={$dirty}
+	/>
 
 	<div class="content">
 		<div class="main-area">
@@ -120,41 +219,60 @@
 				<div class="status-message">Loading...</div>
 			{:else if $error}
 				<div class="status-message error">{$error}</div>
-			{:else if $chunk}
-				<TimeseriesChart
-					on:datazoom={handleDataZoom}
-					on:annotate-point={handleAnnotatePoint}
-					on:annotate-range={handleAnnotateRange}
-				/>
+			{:else if hasData}
+				<section class="section">
+					<h3>Overview</h3>
+					<TimeseriesChart
+						ondatazoom={(data) => debouncedFetchChunks(data.start, data.end)}
+						onannotatepoint={handleAnnotatePoint}
+						onannotaterange={handleAnnotateRange}
+					/>
+				</section>
 
-				{#if $statistics}
-					<BasicStatsTable stats={$statistics} />
+				{#if activeChunk}
+					<section class="section">
+						<ViewportDataTable chunk={activeChunk} />
+					</section>
+
+					<section class="section">
+						<h3>Channel Analysis ({$activeDataset?.file_name ?? ''})</h3>
+						<div class="axis-charts">
+							{#each dataColumns as channelName (channelName)}
+								<SingleAxisChart {channelName} chunk={activeChunk} />
+							{/each}
+						</div>
+					</section>
 				{/if}
 
-				{#if $chunk.is_downsampled}
+				{#if $activeStatistics}
+					<section class="section">
+						<BasicStatsTable stats={$activeStatistics} />
+					</section>
+				{/if}
+
+				{#if activeChunk?.is_downsampled}
 					<div class="info-bar">
-						Showing {$chunk.time.length.toLocaleString()} of {$chunk.original_count.toLocaleString()} points (downsampled)
+						Showing {activeChunk.time.length.toLocaleString()} / {activeChunk.original_count.toLocaleString()}
+						points (downsampled)
 					</div>
 				{/if}
 			{:else}
 				<div class="welcome">
-					<p>Open a CSV file to start analyzing vibration data</p>
-					<p class="hint">File should contain columns: time, x, y, z</p>
+					<p>Open a CSV file to start analyzing data</p>
+					<p class="hint">Any CSV with a time column and numeric data columns</p>
 				</div>
 			{/if}
 		</div>
 
 		<aside class="sidebar">
-			<AnnotationPanel />
+			<FileList />
+			<AnnotationPanel
+				{pendingAnnotation}
+				onconfirm={handleAnnotationConfirm}
+				oncancel={handleAnnotationCancel}
+			/>
 		</aside>
 	</div>
-
-	{#if showAnnotationDialog}
-		<AnnotationDialog
-			on:confirm={handleAnnotationConfirm}
-			on:cancel={() => (showAnnotationDialog = false)}
-		/>
-	{/if}
 </main>
 
 <style>
@@ -180,6 +298,22 @@
 		width: 280px;
 		border-left: 1px solid var(--border, #e0e0e0);
 		overflow-y: auto;
+	}
+
+	.section {
+		margin-bottom: 1.5rem;
+	}
+
+	.section h3 {
+		margin: 0 0 0.5rem;
+		font-size: 1rem;
+		color: var(--text-primary, #333);
+	}
+
+	.axis-charts {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
 	}
 
 	.status-message,

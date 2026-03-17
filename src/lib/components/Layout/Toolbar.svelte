@@ -1,41 +1,59 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
 	import { mode } from '$lib/stores/modeStore';
 	import type { AppMode } from '$lib/stores/modeStore';
+	import { precision, PRECISION_OPTIONS } from '$lib/stores/viewStore';
+	import type { PrecisionLevel } from '$lib/stores/viewStore';
 
-	export let hasUnsaved: boolean = false;
+	interface Props {
+		hasUnsaved?: boolean;
+		onopenfile?: () => void;
+		onsave?: () => void;
+		onexport?: () => void;
+		onexportviewport?: () => void;
+	}
 
-	const dispatch = createEventDispatcher<{
-		'open-file': void;
-		save: void;
-		export: void;
-	}>();
+	let { hasUnsaved = false, onopenfile, onsave, onexport, onexportviewport }: Props = $props();
 
 	function setMode(newMode: AppMode) {
 		mode.set(newMode);
+	}
+
+	function handlePrecisionChange(e: Event) {
+		const value = (e.target as HTMLSelectElement).value as PrecisionLevel;
+		precision.set(value);
 	}
 </script>
 
 <div class="toolbar">
 	<div class="toolbar-group">
-		<button on:click={() => dispatch('open-file')}>Open File</button>
-		<button on:click={() => dispatch('save')} class:unsaved={hasUnsaved}>
+		<button onclick={() => onopenfile?.()}>Open File</button>
+		<button onclick={() => onsave?.()} class:unsaved={hasUnsaved}>
 			{hasUnsaved ? 'Save *' : 'Save'}
 		</button>
 	</div>
 
 	<div class="toolbar-group mode-group">
-		<button class:active={$mode === 'browse'} on:click={() => setMode('browse')}>Browse</button>
-		<button class:active={$mode === 'annotate_point'} on:click={() => setMode('annotate_point')}>
+		<button class:active={$mode === 'browse'} onclick={() => setMode('browse')}>Browse</button>
+		<button class:active={$mode === 'annotate_point'} onclick={() => setMode('annotate_point')}>
 			Mark Point
 		</button>
-		<button class:active={$mode === 'annotate_range'} on:click={() => setMode('annotate_range')}>
+		<button class:active={$mode === 'annotate_range'} onclick={() => setMode('annotate_range')}>
 			Mark Range
 		</button>
 	</div>
 
+	<div class="toolbar-group precision-group">
+		<label class="precision-label" for="precision-select">精度</label>
+		<select id="precision-select" value={$precision} onchange={handlePrecisionChange}>
+			{#each PRECISION_OPTIONS as opt}
+				<option value={opt.value}>{opt.label}</option>
+			{/each}
+		</select>
+	</div>
+
 	<div class="toolbar-group">
-		<button on:click={() => dispatch('export')}>Export</button>
+		<button onclick={() => onexportviewport?.()}>匯出視野</button>
+		<button onclick={() => onexport?.()}>匯出全部</button>
 	</div>
 </div>
 
@@ -47,17 +65,39 @@
 		padding: 0.5rem 1rem;
 		border-bottom: 1px solid var(--border, #e0e0e0);
 		background: var(--surface, #fafafa);
+		flex-wrap: wrap;
 	}
 
 	.toolbar-group {
 		display: flex;
 		gap: 0.25rem;
+		align-items: center;
 	}
 
 	.mode-group {
 		border-left: 1px solid var(--border, #e0e0e0);
 		border-right: 1px solid var(--border, #e0e0e0);
 		padding: 0 0.75rem;
+	}
+
+	.precision-group {
+		border-left: 1px solid var(--border, #e0e0e0);
+		padding: 0 0.75rem;
+	}
+
+	.precision-label {
+		font-size: 0.85rem;
+		font-weight: 500;
+		color: var(--text-secondary, #666);
+	}
+
+	select {
+		padding: 0.35rem 0.5rem;
+		border: 1px solid var(--border, #ccc);
+		border-radius: 4px;
+		font-size: 0.85rem;
+		background: white;
+		cursor: pointer;
 	}
 
 	button {

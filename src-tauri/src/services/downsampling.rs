@@ -1,18 +1,26 @@
 /// LTTB (Largest-Triangle-Three-Buckets) downsampling.
 /// Reduces N points to `threshold` points while preserving visual features.
+#[cfg(test)]
 pub fn lttb(time: &[f64], values: &[f64], threshold: usize) -> (Vec<f64>, Vec<f64>) {
+    let indices = lttb_indices(time, values, threshold);
+    let sampled_time: Vec<f64> = indices.iter().map(|&i| time[i]).collect();
+    let sampled_values: Vec<f64> = indices.iter().map(|&i| values[i]).collect();
+    (sampled_time, sampled_values)
+}
+
+/// LTTB that returns selected indices instead of values.
+/// Use one representative channel for index selection, then apply indices to all channels.
+pub fn lttb_indices(time: &[f64], values: &[f64], threshold: usize) -> Vec<usize> {
     let n = time.len();
 
     if threshold >= n || threshold < 3 {
-        return (time.to_vec(), values.to_vec());
+        return (0..n).collect();
     }
 
-    let mut sampled_time = Vec::with_capacity(threshold);
-    let mut sampled_values = Vec::with_capacity(threshold);
+    let mut indices = Vec::with_capacity(threshold);
 
     // Always keep first point
-    sampled_time.push(time[0]);
-    sampled_values.push(values[0]);
+    indices.push(0);
 
     let bucket_size = (n - 2) as f64 / (threshold - 2) as f64;
     let mut prev_index = 0usize;
@@ -50,16 +58,14 @@ pub fn lttb(time: &[f64], values: &[f64], threshold: usize) -> (Vec<f64>, Vec<f6
             }
         }
 
-        sampled_time.push(time[max_index]);
-        sampled_values.push(values[max_index]);
+        indices.push(max_index);
         prev_index = max_index;
     }
 
     // Always keep last point
-    sampled_time.push(time[n - 1]);
-    sampled_values.push(values[n - 1]);
+    indices.push(n - 1);
 
-    (sampled_time, sampled_values)
+    indices
 }
 
 #[cfg(test)]
@@ -93,5 +99,23 @@ mod tests {
         let (t, _) = lttb(&time, &values, 20);
         assert_eq!(t[0], time[0]);
         assert_eq!(*t.last().unwrap(), *time.last().unwrap());
+    }
+
+    #[test]
+    fn test_lttb_indices_returns_correct_count() {
+        let time: Vec<f64> = (0..1000).map(|i| i as f64).collect();
+        let values: Vec<f64> = time.iter().map(|t| (t * 0.1).sin()).collect();
+        let indices = lttb_indices(&time, &values, 100);
+        assert_eq!(indices.len(), 100);
+        assert_eq!(indices[0], 0);
+        assert_eq!(*indices.last().unwrap(), 999);
+    }
+
+    #[test]
+    fn test_lttb_indices_below_threshold() {
+        let time = vec![1.0, 2.0, 3.0];
+        let values = vec![10.0, 20.0, 30.0];
+        let indices = lttb_indices(&time, &values, 10);
+        assert_eq!(indices, vec![0, 1, 2]);
     }
 }

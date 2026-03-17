@@ -1,18 +1,202 @@
 import type { EChartsOption } from 'echarts';
-import type { TimeseriesChunk } from '$lib/types/vibration';
+import type { TimeseriesChunk, VibrationDataset } from '$lib/types/vibration';
 import type { Annotation } from '$lib/types/annotation';
 
+const COLOR_PALETTE = [
+	'#5470c6',
+	'#91cc75',
+	'#fac858',
+	'#ee6666',
+	'#73c0de',
+	'#3ba272',
+	'#fc8452',
+	'#9a60b4',
+	'#ea7ccc'
+];
+
+export function getChannelColor(index: number): string {
+	return COLOR_PALETTE[index % COLOR_PALETTE.length];
+}
+
+export function formatTime(epochSeconds: number): string {
+	const date = new Date(epochSeconds * 1000);
+	const MM = String(date.getMonth() + 1).padStart(2, '0');
+	const DD = String(date.getDate()).padStart(2, '0');
+	const hh = String(date.getHours()).padStart(2, '0');
+	const mm = String(date.getMinutes()).padStart(2, '0');
+	const ss = String(date.getSeconds()).padStart(2, '0');
+	return `${MM}/${DD} ${hh}:${mm}:${ss}`;
+}
+
+/**
+ * Multi-file overview chart option.
+ * Each dataset + channel = one ECharts series.
+ * Series name: "fileName:channelName" for multi-file, or just "channelName" for single file.
+ */
 export function createOverviewOption(
-	chunk: TimeseriesChunk,
-	annotations: Annotation[]
+	allChunks: Record<string, TimeseriesChunk>,
+	allDatasets: Record<string, VibrationDataset>,
+	datasetOrder: string[],
+	annotations: Annotation[],
+	pendingRangeLine: number | null = null,
+	zoomOptions?: {
+		globalTimeRange?: [number, number] | null;
+		zoomStart?: number;
+		zoomEnd?: number;
+	}
 ): EChartsOption {
+	const isMultiFile = datasetOrder.length > 1;
+
+	// Build markLine data: pending range first-click line
+	const markLineData: any[] = [];
+	if (pendingRangeLine !== null) {
+		markLineData.push({
+			xAxis: pendingRangeLine,
+			lineStyle: { color: '#ff4444', type: 'dashed', width: 2 },
+			label: { show: true, formatter: 'Start', position: 'insideStartTop' }
+		});
+	}
+
+	const series: any[] = [];
+	const legendData: string[] = [];
+	let colorIdx = 0;
+	let firstSeries = true;
+
+	for (const dsId of datasetOrder) {
+		const chunk = allChunks[dsId];
+		const ds = allDatasets[dsId];
+		if (!chunk || !ds) continue;
+
+		const channelNames = Object.keys(chunk.channels);
+		for (const channelName of channelNames) {
+			const values = chunk.channels[channelName];
+			const pairedData = chunk.time.map((t, i) => [t, values[i]]);
+			const seriesName = isMultiFile ? `${ds.file_name}:${channelName}` : channelName;
+
+			legendData.push(seriesName);
+
+			const baseSeries: any = {
+				name: seriesName,
+				type: 'line',
+				data: pairedData,
+				symbol: 'none',
+				lineStyle: { width: 1 },
+				itemStyle: { color: getChannelColor(colorIdx) }
+			};
+
+			// First series gets annotations
+			if (firstSeries) {
+				baseSeries.markPoint = { data: buildMarkPoints(annotations, channelName) };
+				baseSeries.markArea = { data: buildMarkAreas(annotations) as any };
+				if (markLineData.length > 0) {
+					baseSeries.markLine = {
+						data: markLineData,
+						silent: true,
+						symbol: 'none',
+						animation: false
+					};
+				}
+				firstSeries = false;
+			}
+
+			series.push(baseSeries);
+			colorIdx++;
+		}
+	}
+
 	return {
 		tooltip: {
 			trigger: 'axis',
-			axisPointer: { type: 'cross' }
+			axisPointer: { type: 'cross' },
+			formatter: (params: any) => {
+				if (!Array.isArray(params) || params.length === 0) return '';
+				const time = params[0].value?.[0];
+				const timeStr = time !== undefined ? formatTime(time) : '';
+				let html = `<strong>${timeStr}</strong><br/>`;
+				for (const p of params) {
+					const val = p.value?.[1];
+					html += `${p.marker} ${p.seriesName}: ${val !== undefined ? Number(val).toFixed(6) : 'N/A'}<br/>`;
+				}
+				return html;
+			}
 		},
 		legend: {
-			data: ['X', 'Y', 'Z']
+			data: legendData,
+			type: legendData.length > 6 ? 'scroll' : 'plain'
+		},
+		toolbox: {
+			feature: {
+				dataZoom: { title: { zoom: 'Box Zoom', back: 'Undo Zoom' } },
+				restore: { title: 'Reset' }
+			},
+			right: 20
+		},
+		grid: {
+			left: '3%',
+			right: '4%',
+			bottom: '15%',
+			containLabel: true
+		},
+		dataZoom: [
+			{
+				type: 'slider',
+				xAxisIndex: 0,
+				start: zoomOptions?.zoomStart ?? 0,
+				end: zoomOptions?.zoomEnd ?? 100
+			},
+			{ type: 'inside', xAxisIndex: 0 }
+		],
+		xAxis: {
+			type: 'value',
+			name: 'Time',
+			axisLabel: {
+				formatter: (v: number) => formatTime(v),
+				rotate: 30,
+				fontSize: 10
+			},
+			min: zoomOptions?.globalTimeRange ? zoomOptions.globalTimeRange[0] : 'dataMin',
+			max: zoomOptions?.globalTimeRange ? zoomOptions.globalTimeRange[1] : 'dataMax'
+		},
+		yAxis: {
+			type: 'value',
+			name: 'Vibration'
+		},
+		series
+	};
+}
+
+export function createSingleAxisOption(
+	chunk: TimeseriesChunk,
+	channelName: string
+): EChartsOption {
+	const data = chunk.channels[channelName];
+	const channelNames = Object.keys(chunk.channels);
+	const colorIdx = channelNames.indexOf(channelName);
+	const color = getChannelColor(colorIdx >= 0 ? colorIdx : 0);
+	const pairedData = chunk.time.map((t, i) => [t, data[i]]);
+
+	return {
+		title: {
+			text: `${channelName} channel`,
+			textStyle: { fontSize: 14 }
+		},
+		tooltip: {
+			trigger: 'axis',
+			formatter: (params: any) => {
+				const p = Array.isArray(params) ? params[0] : params;
+				if (!p) return '';
+				const time = p.value?.[0];
+				const val = p.value?.[1];
+				const timeStr = time !== undefined ? formatTime(time) : '';
+				return `<strong>${timeStr}</strong><br/>${p.marker} ${channelName}: ${val !== undefined ? Number(val).toFixed(6) : 'N/A'}`;
+			}
+		},
+		toolbox: {
+			feature: {
+				dataZoom: { title: { zoom: 'Box Zoom', back: 'Undo Zoom' } },
+				restore: { title: 'Reset' }
+			},
+			right: 20
 		},
 		grid: {
 			left: '3%',
@@ -25,38 +209,28 @@ export function createOverviewOption(
 			{ type: 'inside', xAxisIndex: 0 }
 		],
 		xAxis: {
-			type: 'category',
-			data: chunk.time.map((t) => t.toFixed(4)),
-			name: 'Time',
-			boundaryGap: false
+			type: 'value',
+			axisLabel: {
+				formatter: (v: number) => formatTime(v),
+				rotate: 30,
+				fontSize: 10
+			},
+			min: 'dataMin',
+			max: 'dataMax'
 		},
 		yAxis: {
 			type: 'value',
-			name: 'Vibration'
+			name: channelName
 		},
 		series: [
 			{
-				name: 'X',
+				name: channelName,
 				type: 'line',
-				data: chunk.x,
+				data: pairedData,
 				symbol: 'none',
 				lineStyle: { width: 1 },
-				markPoint: { data: buildMarkPoints(annotations, 'x') },
-				markArea: { data: buildMarkAreas(annotations) as any }
-			},
-			{
-				name: 'Y',
-				type: 'line',
-				data: chunk.y,
-				symbol: 'none',
-				lineStyle: { width: 1 }
-			},
-			{
-				name: 'Z',
-				type: 'line',
-				data: chunk.z,
-				symbol: 'none',
-				lineStyle: { width: 1 }
+				itemStyle: { color },
+				areaStyle: { color, opacity: 0.05 }
 			}
 		]
 	};

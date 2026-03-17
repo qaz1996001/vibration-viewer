@@ -1,91 +1,113 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import * as echarts from 'echarts';
-	import { chunk } from '$lib/stores/dataStore';
+	import { chunks, datasets, datasetOrder, globalTimeRange } from '$lib/stores/dataStore';
 	import { annotations } from '$lib/stores/annotationStore';
-	import { mode } from '$lib/stores/modeStore';
+	import { mode, rangeFirstClick } from '$lib/stores/modeStore';
 	import { createOverviewOption } from './chartOptions';
-	import { createEventDispatcher } from 'svelte';
 
-	const dispatch = createEventDispatcher<{
-		datazoom: { start: number; end: number };
-		'annotate-point': { time: number; value: number };
-		'annotate-range': { startTime: number; endTime: number };
-	}>();
+	interface Props {
+		ondatazoom?: (data: { start: number; end: number }) => void;
+		onannotatepoint?: (data: { time: number; value: number }) => void;
+		onannotaterange?: (data: { startTime: number; endTime: number }) => void;
+	}
+
+	let { ondatazoom, onannotatepoint, onannotaterange }: Props = $props();
 
 	let chartContainer: HTMLDivElement;
-	let chart: echarts.ECharts | null = null;
+	let chartInstance: echarts.ECharts | null = $state(null);
+
+	// Non-reactive zoom state — plain variable so changes don't trigger $effect
+	let currentZoom = { start: 0, end: 100 };
 
 	onMount(() => {
-		chart = echarts.init(chartContainer);
+		const instance = echarts.init(chartContainer);
+		chartInstance = instance;
 
-		chart.on('datazoom', handleDataZoom);
-		chart.getZr().on('click', handleChartClick);
-		chart.on('brushSelected', handleBrushSelected);
+		instance.on('datazoom', (params: any) => {
+			const start = params.start ?? params.batch?.[0]?.start;
+			const end = params.end ?? params.batch?.[0]?.end;
+			if (start === undefined || end === undefined) return;
+			// Guard: skip if values match current state (prevents setOption feedback loop)
+			if (Math.abs(start - currentZoom.start) < 0.01 && Math.abs(end - currentZoom.end) < 0.01) return;
+			currentZoom = { start, end };
+			ondatazoom?.({ start, end });
+		});
+
+		instance.getZr().on('click', (params: any) => {
+			const currentMode = $mode;
+			if (currentMode !== 'annotate_point' && currentMode !== 'annotate_range') return;
+
+			const pointInPixel = [params.offsetX, params.offsetY];
+			const pointInGrid = instance.convertFromPixel('grid', pointInPixel);
+			if (!pointInGrid) return;
+
+			const timeValue = pointInGrid[0];
+			const yValue = pointInGrid[1];
+
+			if (currentMode === 'annotate_point') {
+				onannotatepoint?.({
+					time: timeValue,
+					value: yValue
+				});
+			} else if (currentMode === 'annotate_range') {
+				const first = $rangeFirstClick;
+				if (first === null) {
+					rangeFirstClick.set(timeValue);
+				} else {
+					const startTime = Math.min(first, timeValue);
+					const endTime = Math.max(first, timeValue);
+					rangeFirstClick.set(null);
+					onannotaterange?.({ startTime, endTime });
+				}
+			}
+		});
 
 		const resizeObserver = new ResizeObserver(() => {
-			chart?.resize();
+			instance.resize();
 		});
 		resizeObserver.observe(chartContainer);
 
 		return () => {
 			resizeObserver.disconnect();
-			chart?.dispose();
+			instance.dispose();
 		};
 	});
 
-	$: if (chart && $chunk) {
-		const option = createOverviewOption($chunk, $annotations);
-		configureBrush(option, $mode);
-		chart.setOption(option, { notMerge: false });
-	}
-
-	function configureBrush(option: echarts.EChartsOption, currentMode: string) {
-		if (currentMode === 'annotate_range') {
-			(option as any).brush = {
-				toolbox: ['rect'],
-				xAxisIndex: 0,
-				brushStyle: { borderWidth: 1, color: 'rgba(255,107,107,0.2)' }
-			};
-		} else {
-			(option as any).brush = { toolbox: [] };
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape' && $rangeFirstClick !== null) {
+			rangeFirstClick.set(null);
 		}
 	}
 
-	function handleDataZoom(params: any) {
-		dispatch('datazoom', {
-			start: params.start ?? params.batch?.[0]?.start ?? 0,
-			end: params.end ?? params.batch?.[0]?.end ?? 100
-		});
-	}
+	$effect(() => {
+		const currentChunks = $chunks;
+		const currentDatasets = $datasets;
+		const currentOrder = $datasetOrder;
+		const currentAnnotations = $annotations;
+		const currentPendingLine = $rangeFirstClick;
+		const currentGlobalRange = $globalTimeRange;
+		const chart = chartInstance;
 
-	function handleChartClick(params: any) {
-		if ($mode !== 'annotate_point') return;
-		if (!chart) return;
+		if (!chart || currentOrder.length === 0) return;
 
-		const pointInPixel = [params.offsetX, params.offsetY];
-		const pointInGrid = chart.convertFromPixel('grid', pointInPixel);
-		if (!pointInGrid) return;
-
-		dispatch('annotate-point', {
-			time: pointInGrid[0],
-			value: pointInGrid[1]
-		});
-	}
-
-	function handleBrushSelected(params: any) {
-		if ($mode !== 'annotate_range') return;
-
-		const areas = params.batch?.[0]?.areas;
-		if (!areas || areas.length === 0) return;
-
-		const range = areas[0].coordRange;
-		dispatch('annotate-range', {
-			startTime: range[0],
-			endTime: range[1]
-		});
-	}
+		const option = createOverviewOption(
+			currentChunks,
+			currentDatasets,
+			currentOrder,
+			currentAnnotations,
+			currentPendingLine,
+			{
+				globalTimeRange: currentGlobalRange,
+				zoomStart: currentZoom.start,
+				zoomEnd: currentZoom.end
+			}
+		);
+		chart.setOption(option, { notMerge: true });
+	});
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div bind:this={chartContainer} class="chart-container"></div>
 
@@ -93,5 +115,6 @@
 	.chart-container {
 		width: 100%;
 		height: 400px;
+		min-height: 400px;
 	}
 </style>
