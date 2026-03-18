@@ -6,13 +6,15 @@
 
 	interface Props {
 		hasUnsaved?: boolean;
+		hasProject?: boolean;
 		onopenfile?: () => void;
 		onsave?: () => void;
 		onexport?: () => void;
 		onexportviewport?: () => void;
+		onclose?: () => void;
 	}
 
-	let { hasUnsaved = false, onopenfile, onsave, onexport, onexportviewport }: Props = $props();
+	let { hasUnsaved = false, hasProject = false, onopenfile, onsave, onexport, onexportviewport, onclose }: Props = $props();
 
 	function setMode(newMode: AppMode) {
 		mode.set(newMode);
@@ -30,6 +32,9 @@
 		<button onclick={() => onsave?.()} class:unsaved={hasUnsaved}>
 			{hasUnsaved ? 'Save *' : 'Save'}
 		</button>
+		{#if hasProject}
+			<button onclick={() => onclose?.()}>Close</button>
+		{/if}
 	</div>
 
 	<div class="toolbar-group mode-group">

@@ -7,6 +7,9 @@ export const annotations = writable<Annotation[]>([]);
 export const selectedId = writable<string | null>(null);
 export const dirty = writable(false);
 
+/** Per-device annotation map — keyed by device/dataset ID */
+export const deviceAnnotations = writable<Record<string, Annotation[]>>({});
+
 export function addAnnotation(
 	annotationType: AnnotationType,
 	label: string,
@@ -70,6 +73,33 @@ export async function loadAnnotations(filePath: string): Promise<void> {
 		dirty.set(false);
 	} catch (e) {
 		console.error('Failed to load annotations:', e);
+		throw e;
+	}
+}
+
+/** Save annotations for a specific device, falling back to global annotations */
+export async function saveDeviceAnnotations(deviceId: string, filePath: string): Promise<void> {
+	try {
+		const current = get(deviceAnnotations)[deviceId] ?? get(annotations);
+		await invoke('save_annotations', {
+			annotationPath: annotationPath(filePath),
+			annotations: current
+		});
+	} catch (e) {
+		console.error('Failed to save device annotations:', e);
+		throw e;
+	}
+}
+
+/** Load annotations for a specific device into the per-device map */
+export async function loadDeviceAnnotations(deviceId: string, filePath: string): Promise<void> {
+	try {
+		const loaded = await invoke<Annotation[]>('load_annotations', {
+			annotationPath: annotationPath(filePath)
+		});
+		deviceAnnotations.update((map) => ({ ...map, [deviceId]: loaded }));
+	} catch (e) {
+		console.error('Failed to load device annotations:', e);
 		throw e;
 	}
 }

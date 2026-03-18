@@ -8,6 +8,8 @@ import type {
 } from '$lib/types/vibration';
 import type { StatisticsReport } from '$lib/types/statistics';
 import { COLOR_PALETTE } from '$lib/constants/colors';
+import { setProject, closeProject as closeProjectStore } from './projectStore';
+import type { ProjectState } from './projectStore';
 
 // Multi-file stores
 export const datasetOrder = writable<string[]>([]);
@@ -88,6 +90,30 @@ export async function addFile(filePath: string, columnMapping: ColumnMapping): P
 			fetchChunkForDataset(ds.id, ds.time_range[0], ds.time_range[1], 50000),
 			fetchStatisticsForDataset(ds.id)
 		]);
+
+		// Sync project state
+		const allDatasets = get(datasets);
+		const projectState: ProjectState = {
+			project_type: 'single_file',
+			devices: Object.values(allDatasets).map((d) => ({
+				id: d.id,
+				name: d.file_name,
+				sources: [
+					{
+						file_path: d.file_path,
+						file_name: d.file_name,
+						source_type: 'csv' as const
+					}
+				],
+				channel_schema: { groups: {} }
+			})),
+			sensor_mapping: {},
+			metadata: {
+				name: Object.values(allDatasets)[0]?.file_name ?? 'Untitled',
+				created_at: new Date().toISOString()
+			}
+		};
+		setProject(projectState);
 	} catch (e) {
 		error.set(String(e));
 	} finally {
@@ -124,6 +150,26 @@ export function removeFile(id: string): void {
 		const remaining = get(datasetOrder);
 		activeDatasetId.set(remaining.length > 0 ? remaining[0] : null);
 	}
+
+	// Close project when all files removed
+	if (get(datasetOrder).length === 0) {
+		closeProjectStore();
+	}
+}
+
+export async function closeAll(): Promise<void> {
+	try {
+		await invoke('close_project');
+	} catch (e) {
+		console.error('Failed to close project:', e);
+	}
+	datasets.set({});
+	chunks.set({});
+	statistics.set({});
+	fileColors.set({});
+	datasetOrder.set([]);
+	activeDatasetId.set(null);
+	closeProjectStore();
 }
 
 export async function fetchAllChunks(

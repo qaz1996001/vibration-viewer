@@ -21,7 +21,8 @@
 		error,
 		previewFile,
 		addFile,
-		fetchAllChunks
+		fetchAllChunks,
+		closeAll
 	} from '$lib/stores/dataStore';
 	import {
 		addAnnotation,
@@ -32,6 +33,7 @@
 	} from '$lib/stores/annotationStore';
 	import { mode, rangeFirstClick } from '$lib/stores/modeStore';
 	import { precision, getMaxPoints } from '$lib/stores/viewStore';
+	import { projectOpen } from '$lib/stores/projectStore';
 	import { debounce } from '$lib/utils/debounce';
 	import type { ColumnMapping, CsvPreview } from '$lib/types/vibration';
 
@@ -85,6 +87,10 @@
 		showMappingDialog = false;
 		pendingFilePaths = [];
 		currentPreview = null;
+	}
+
+	async function handleCloseProject() {
+		await closeAll();
 	}
 
 	async function handleSave() {
@@ -240,7 +246,9 @@
 		onsave={handleSave}
 		onexport={handleExport}
 		onexportviewport={handleExportViewport}
+		onclose={handleCloseProject}
 		hasUnsaved={$dirty}
+		hasProject={$projectOpen}
 	/>
 
 	<div class="content">
