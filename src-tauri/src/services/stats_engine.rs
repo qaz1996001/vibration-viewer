@@ -74,6 +74,11 @@ pub fn compute_distribution_stats(
     })
 }
 
+/// NOTE: Polars 0.46 provides built-in `Series::skew(bias)` and
+/// `Series::kurtosis(fisher, bias)` via the `moment` feature flag
+/// (in polars-ops, trait `MomentSeries`). These use scipy-equivalent
+/// moment-based formulas and support bias correction. Consider switching
+/// to the built-in methods when this module is next refactored.
 pub fn compute_shape_stats(series: &Series, axis_name: &str) -> Result<AxisShapeStats, AppError> {
     let n = series.len() as f64;
 

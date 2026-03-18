@@ -1,12 +1,12 @@
 use indexmap::IndexMap;
+use polars::prelude::*;
 use std::path::Path;
 use tauri::State;
 use uuid::Uuid;
-use polars::prelude::*;
 
 use crate::error::AppError;
 use crate::models::vibration::*;
-use crate::services::{csv_reader, downsampling};
+use crate::services::{csv_reader, downsampling, time_filter};
 use crate::state::{AppState, DatasetEntry};
 
 #[tauri::command]
@@ -20,6 +20,7 @@ pub fn load_vibration_data(
     column_mapping: ColumnMapping,
     state: State<AppState>,
 ) -> Result<VibrationDataset, AppError> {
+    // Perform file I/O outside of lock scope
     let df = csv_reader::read_csv_with_mapping(&file_path, &column_mapping)?;
 
     let time_col = df.column("time")?.f64()?;
@@ -42,6 +43,7 @@ pub fn load_vibration_data(
         column_mapping,
     };
 
+    // Acquire write lock only for the insert
     let mut datasets = state.datasets.write().map_err(|_| AppError::LockPoisoned)?;
     datasets.insert(
         id,
@@ -62,23 +64,17 @@ pub fn get_timeseries_chunk(
     max_points: usize,
     state: State<AppState>,
 ) -> Result<TimeseriesChunk, AppError> {
-    let datasets = state.datasets.read().map_err(|_| AppError::LockPoisoned)?;
-    let entry = datasets
-        .get(&dataset_id)
-        .ok_or_else(|| AppError::DatasetNotFound(dataset_id.clone()))?;
-    let df = &entry.dataframe;
-    let data_columns = &entry.metadata.column_mapping.data_columns;
+    // Acquire read lock, clone out needed data, then release lock before computation
+    let (df_clone, data_columns) = {
+        let datasets = state.datasets.read().map_err(|_| AppError::LockPoisoned)?;
+        let entry = datasets
+            .get(&dataset_id)
+            .ok_or_else(|| AppError::DatasetNotFound(dataset_id.clone()))?;
+        (entry.dataframe.clone(), entry.metadata.column_mapping.data_columns.clone())
+    }; // Read lock released here
 
-    // Filter by time range using Polars lazy filter (SIMD-accelerated)
-    let filtered = df
-        .clone()
-        .lazy()
-        .filter(
-            col("time")
-                .gt_eq(lit(start_time))
-                .and(col("time").lt_eq(lit(end_time))),
-        )
-        .collect()?;
+    // Filter by time range using shared time_filter (SIMD-accelerated)
+    let filtered = time_filter::filter_time_range(&df_clone, "time", start_time, end_time)?;
     let original_count = filtered.height();
 
     let time_raw = extract_f64_vec(&filtered, "time")?;
@@ -93,7 +89,7 @@ pub fn get_timeseries_chunk(
 
         let time: Vec<f64> = indices.iter().map(|&i| time_raw[i]).collect();
         let mut channels = IndexMap::new();
-        for col_name in data_columns {
+        for col_name in &data_columns {
             let raw = extract_f64_vec(&filtered, col_name)?;
             let sampled: Vec<f64> = indices.iter().map(|&i| raw[i]).collect();
             channels.insert(col_name.clone(), sampled);
@@ -107,7 +103,7 @@ pub fn get_timeseries_chunk(
         })
     } else {
         let mut channels = IndexMap::new();
-        for col_name in data_columns {
+        for col_name in &data_columns {
             channels.insert(col_name.clone(), extract_f64_vec(&filtered, col_name)?);
         }
 

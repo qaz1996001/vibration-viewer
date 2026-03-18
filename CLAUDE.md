@@ -11,8 +11,8 @@ Vibration time-series annotation tool built with **Tauri 2 + SvelteKit + ECharts
 **Rust backend** (`src-tauri/src/`):
 - `commands/` — 7 IPC endpoints: `data.rs` (preview_csv_columns, load_vibration_data, get_timeseries_chunk), `statistics.rs`, `annotation.rs`, `export.rs`
 - `models/` — `vibration.rs` (ColumnMapping, CsvPreview, VibrationDataset, TimeseriesChunk with IndexMap channels), `annotation.rs`, `statistics.rs`
-- `services/` — `csv_reader.rs` (preview_csv + read_csv_with_mapping), `downsampling.rs` (lttb_indices), `stats_engine.rs`
-- `state.rs` — `AppState` with `Mutex<HashMap<id, DatasetEntry>>`
+- `services/` — `csv_reader.rs` (preview_csv + read_csv_with_mapping), `downsampling.rs` (lttb_indices), `stats_engine.rs`, `time_filter.rs` (shared Polars lazy time range filter)
+- `state.rs` — `AppState` with `RwLock<HashMap<id, DatasetEntry>>`
 - `error.rs` — `AppError` enum (thiserror + Serialize) for typed IPC errors
 - `lib.rs` — Tauri builder entry point
 

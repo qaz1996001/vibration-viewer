@@ -10,19 +10,22 @@ pub fn compute_statistics(
     dataset_id: String,
     state: State<AppState>,
 ) -> Result<StatisticsReport, AppError> {
-    let datasets = state.datasets.read().map_err(|_| AppError::LockPoisoned)?;
-    let entry = datasets
-        .get(&dataset_id)
-        .ok_or_else(|| AppError::DatasetNotFound(dataset_id.clone()))?;
-    let df = &entry.dataframe;
-    let data_columns = &entry.metadata.column_mapping.data_columns;
+    // Acquire read lock, clone out needed data, release lock before computation
+    let (df_clone, data_columns) = {
+        let datasets = state.datasets.read().map_err(|_| AppError::LockPoisoned)?;
+        let entry = datasets
+            .get(&dataset_id)
+            .ok_or_else(|| AppError::DatasetNotFound(dataset_id.clone()))?;
+        (entry.dataframe.clone(), entry.metadata.column_mapping.data_columns.clone())
+    }; // Read lock released here
 
+    // Heavy computation happens outside of lock scope
     let mut basic = Vec::new();
     let mut distribution = Vec::new();
     let mut shape = Vec::new();
 
-    for col_name in data_columns {
-        let col = df.column(col_name)?;
+    for col_name in &data_columns {
+        let col = df_clone.column(col_name)?;
         let series = col.as_materialized_series();
         basic.push(stats_engine::compute_basic_stats(series, col_name)?);
         distribution.push(stats_engine::compute_distribution_stats(series, col_name)?);
