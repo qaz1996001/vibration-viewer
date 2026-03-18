@@ -212,3 +212,39 @@ async function fetchStatisticsForDataset(datasetId: string): Promise<void> {
 		error.set(String(e));
 	}
 }
+
+/**
+ * Add a single dataset returned from the backend (e.g. load_device_data)
+ * into all frontend stores and fetch its initial chunk + statistics.
+ */
+export async function addDeviceDataset(ds: VibrationDataset): Promise<void> {
+	datasets.update((d) => ({ ...d, [ds.id]: ds }));
+
+	const colorIdx = get(datasetOrder).length;
+	fileColors.update((fc) => ({
+		...fc,
+		[ds.id]: COLOR_PALETTE[colorIdx % COLOR_PALETTE.length]
+	}));
+	datasetOrder.update((order) => [...order, ds.id]);
+	activeDatasetId.set(ds.id);
+
+	await Promise.all([
+		fetchChunkForDataset(ds.id, ds.time_range[0], ds.time_range[1], 50000),
+		fetchStatisticsForDataset(ds.id)
+	]);
+}
+
+/**
+ * Sync all datasets currently held in the Rust backend into the frontend stores.
+ * Skips datasets already present in datasetOrder. Used after loading a .vibproj file.
+ */
+export async function syncDatasetsFromBackend(): Promise<void> {
+	const allDs = await invoke<VibrationDataset[]>('list_datasets');
+	const currentOrder = get(datasetOrder);
+
+	for (const ds of allDs) {
+		if (!currentOrder.includes(ds.id)) {
+			await addDeviceDataset(ds);
+		}
+	}
+}

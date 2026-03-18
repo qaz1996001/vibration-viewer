@@ -8,6 +8,7 @@
 	import ViewportDataTable from '$lib/components/DataTable/ViewportDataTable.svelte';
 	import ColumnMappingDialog from '$lib/components/ColumnMapping/ColumnMappingDialog.svelte';
 	import FileList from '$lib/components/Layout/FileList.svelte';
+	import DeviceSelector from '$lib/components/Layout/DeviceSelector.svelte';
 	import Toolbar from '$lib/components/Layout/Toolbar.svelte';
 	import {
 		datasetOrder,
@@ -22,7 +23,8 @@
 		previewFile,
 		addFile,
 		fetchAllChunks,
-		closeAll
+		closeAll,
+		syncDatasetsFromBackend
 	} from '$lib/stores/dataStore';
 	import {
 		addAnnotation,
@@ -31,9 +33,9 @@
 		loadAnnotations,
 		dirty
 	} from '$lib/stores/annotationStore';
-	import { mode, rangeFirstClick } from '$lib/stores/modeStore';
-	import { precision, getMaxPoints } from '$lib/stores/viewStore';
-	import { projectOpen } from '$lib/stores/projectStore';
+	import { mode, rangeFirstClick, precision, getMaxPoints } from '$lib/stores/uiStore';
+	import { projectOpen, project, setProject, mapBackendProjectInfo, loadDeviceData } from '$lib/stores/projectStore';
+	import { get } from 'svelte/store';
 	import { debounce } from '$lib/utils/debounce';
 	import type { ColumnMapping, CsvPreview } from '$lib/types/vibration';
 	import type { Annotation } from '$lib/types/annotation';
@@ -93,6 +95,93 @@
 
 	async function handleCloseProject() {
 		await closeAll();
+	}
+
+	async function handleDeviceSelect(deviceId: string) {
+		// Check if data is already loaded for this device
+		const currentDatasets = get(datasets);
+		if (currentDatasets[deviceId]) {
+			// Data already loaded — just switch active
+			activeDatasetId.set(deviceId);
+			return;
+		}
+
+		// Load device data (shows loading state)
+		loading.set(true);
+		error.set(null);
+		try {
+			await loadDeviceData(deviceId);
+		} catch (e) {
+			error.set(String(e));
+		} finally {
+			loading.set(false);
+		}
+	}
+
+	async function handleOpenProject() {
+		try {
+			const selected = await open({ directory: true });
+			if (!selected) return;
+
+			const folderPath = typeof selected === 'string' ? selected : selected[0];
+			if (!folderPath) return;
+
+			const result = await invoke<Record<string, unknown>>('open_aidps_project', { folderPath });
+			const projectState = mapBackendProjectInfo(result);
+			setProject(projectState);
+
+			// Auto-load first device
+			if (projectState.devices.length > 0) {
+				await handleDeviceSelect(projectState.devices[0].id);
+			}
+		} catch (e) {
+			console.error('Failed to open AIDPS project:', e);
+			error.set(String(e));
+		}
+	}
+
+	async function handleSaveProject() {
+		try {
+			const outputPath = await save({
+				filters: [{ name: 'VibProj', extensions: ['vibproj'] }]
+			});
+			if (!outputPath) return;
+
+			await invoke('save_project_file', { outputPath });
+		} catch (e) {
+			console.error('Failed to save project:', e);
+			error.set(String(e));
+		}
+	}
+
+	async function handleLoadProject() {
+		try {
+			const selected = await open({
+				multiple: false,
+				filters: [{ name: 'VibProj', extensions: ['vibproj'] }]
+			});
+			if (!selected) return;
+
+			const filePath = typeof selected === 'string' ? selected : selected[0];
+			if (!filePath) return;
+
+			const result = await invoke<Record<string, unknown>>('load_project_file', { filePath });
+			const projectState = mapBackendProjectInfo(result);
+			setProject(projectState);
+
+			// Sync backend datasets to frontend stores
+			loading.set(true);
+			error.set(null);
+			try {
+				await syncDatasetsFromBackend();
+			} finally {
+				loading.set(false);
+			}
+		} catch (e) {
+			console.error('Failed to load project:', e);
+			error.set(String(e));
+			loading.set(false);
+		}
 	}
 
 	async function handleSave() {
@@ -273,6 +362,9 @@
 	);
 	let dataColumns = $derived($activeDataset?.column_mapping.data_columns ?? []);
 	let hasData = $derived($datasetOrder.length > 0);
+	let isAidpsMode = $derived(
+		$projectOpen && $project?.project_type === 'aidps_folder'
+	);
 </script>
 
 {#if showMappingDialog && currentPreview}
@@ -286,6 +378,9 @@
 <main class="app-layout">
 	<Toolbar
 		onopenfile={handleOpenFile}
+		onopenproject={handleOpenProject}
+		onsaveproject={handleSaveProject}
+		onloadproject={handleLoadProject}
 		onsave={handleSave}
 		onexport={handleExport}
 		onexportviewport={handleExportViewport}
@@ -349,7 +444,11 @@
 		</div>
 
 		<aside class="sidebar">
-			<FileList />
+			{#if isAidpsMode}
+				<DeviceSelector onselect={handleDeviceSelect} />
+			{:else}
+				<FileList />
+			{/if}
 			<AnnotationPanel
 				{pendingAnnotation}
 				onconfirm={handleAnnotationConfirm}

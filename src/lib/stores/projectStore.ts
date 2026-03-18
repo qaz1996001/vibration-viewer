@@ -1,4 +1,7 @@
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
+import { invoke } from '@tauri-apps/api/core';
+import type { ColumnMapping, VibrationDataset } from '$lib/types/vibration';
+import { addDeviceDataset } from './dataStore';
 
 // --- Types ---
 
@@ -86,4 +89,55 @@ export function closeProject(): void {
 /** Switch active device */
 export function selectDevice(deviceId: string): void {
   activeDeviceId.set(deviceId);
+}
+
+/**
+ * Convert backend ProjectInfo (PascalCase enum) to frontend ProjectState (snake_case).
+ * Rust serde serializes ProjectType as "SingleFile", "AidpsFolder", "VibprojFile".
+ */
+export function mapBackendProjectInfo(info: Record<string, unknown>): ProjectState {
+  const typeMap: Record<string, ProjectType> = {
+    'SingleFile': 'single_file',
+    'AidpsFolder': 'aidps_folder',
+    'VibprojFile': 'vibproj_file',
+  };
+  const rawType = info.project_type as string;
+  return {
+    project_type: typeMap[rawType] ?? 'single_file',
+    devices: (info.devices as DeviceInfo[]) ?? [],
+    sensor_mapping: (info.sensor_mapping as Record<string, string>) ?? {},
+    metadata: info.metadata as ProjectMetadata,
+  };
+}
+
+/** Load device data from AIDPS project (triggers backend multi-CSV merge) */
+export async function loadDeviceData(deviceId: string): Promise<void> {
+  const proj = get(project);
+  if (!proj) return;
+
+  const device = proj.devices.find(d => d.id === deviceId);
+  if (!device) return;
+
+  // Extract file paths from device sources
+  const filePaths = device.sources.map(s => s.file_path);
+
+  // Build ColumnMapping from device channel_schema
+  // Flatten all group channels into data_columns; use first source's time column assumption
+  const allChannels = Object.values(device.channel_schema.groups).flat();
+  const mapping: ColumnMapping = {
+    time_column: 'time', // AIDPS default; backend will resolve actual column
+    data_columns: allChannels.length > 0 ? allChannels : [],
+  };
+
+  try {
+    const ds = await invoke<VibrationDataset>('load_device_data', {
+      deviceId,
+      filePaths,
+      mapping,
+    });
+    // Populate dataStore with the loaded dataset
+    await addDeviceDataset(ds);
+  } catch (e) {
+    console.error('Failed to load device data:', e);
+  }
 }
