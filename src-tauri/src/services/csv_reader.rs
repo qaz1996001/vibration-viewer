@@ -7,6 +7,17 @@ use crate::models::vibration::{ColumnMapping, CsvPreview};
 /// Maximum rows to read for column preview (keeps preview instant for large files).
 const PREVIEW_ROW_LIMIT: usize = 100;
 
+/// Helper: write string content to a temp CSV file and return the path as String.
+#[cfg(test)]
+fn write_temp_csv(content: &str) -> (tempfile::NamedTempFile, String) {
+    use std::io::Write;
+    let mut tmp = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
+    tmp.write_all(content.as_bytes()).unwrap();
+    tmp.flush().unwrap();
+    let path = tmp.path().to_string_lossy().to_string();
+    (tmp, path)
+}
+
 /// Preview CSV file: read only the first N rows for column detection.
 /// Uses `with_n_rows` to avoid loading the entire file into memory,
 /// making preview instant even for multi-GB files.
@@ -137,4 +148,193 @@ pub fn read_csv_with_mapping(
     lazy = lazy.select(select_cols);
 
     Ok(lazy.collect()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── preview_csv tests ───
+
+    #[test]
+    fn test_preview_csv_returns_correct_columns_and_row_count() {
+        let csv = "time,x,y,z\n1.0,0.1,0.2,0.3\n2.0,0.4,0.5,0.6\n3.0,0.7,0.8,0.9\n";
+        let (_tmp, path) = write_temp_csv(csv);
+        let preview = preview_csv(&path).unwrap();
+        assert_eq!(preview.columns, vec!["time", "x", "y", "z"]);
+        assert_eq!(preview.row_count, 3);
+        assert_eq!(preview.file_path, path);
+    }
+
+    #[test]
+    fn test_preview_csv_empty_csv_headers_only() {
+        let csv = "time,accel_x,accel_y\n";
+        let (_tmp, path) = write_temp_csv(csv);
+        let preview = preview_csv(&path).unwrap();
+        assert_eq!(preview.columns, vec!["time", "accel_x", "accel_y"]);
+        assert_eq!(preview.row_count, 0);
+    }
+
+    #[test]
+    fn test_preview_csv_single_row() {
+        let csv = "ts,val\n42.0,99.9\n";
+        let (_tmp, path) = write_temp_csv(csv);
+        let preview = preview_csv(&path).unwrap();
+        assert_eq!(preview.columns, vec!["ts", "val"]);
+        assert_eq!(preview.row_count, 1);
+    }
+
+    #[test]
+    fn test_preview_csv_file_not_found() {
+        let result = preview_csv("/nonexistent/path/file.csv");
+        assert!(result.is_err());
+    }
+
+    // ─── read_csv_with_mapping: numeric time (epoch seconds) ───
+
+    #[test]
+    fn test_read_csv_numeric_time_columns() {
+        let csv = "ts,x,y\n1000.0,1.1,2.2\n2000.0,3.3,4.4\n3000.0,5.5,6.6\n";
+        let (_tmp, path) = write_temp_csv(csv);
+        let mapping = ColumnMapping {
+            time_column: "ts".into(),
+            data_columns: vec!["x".into(), "y".into()],
+        };
+        let df = read_csv_with_mapping(&path, &mapping).unwrap();
+        assert_eq!(df.height(), 3);
+        assert_eq!(df.width(), 3); // time, x, y
+
+        let time = df.column("time").unwrap().f64().unwrap();
+        assert!((time.get(0).unwrap() - 1000.0).abs() < 1e-6);
+        assert!((time.get(2).unwrap() - 3000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_read_csv_integer_timestamps() {
+        let csv = "epoch,val\n1700000000,10\n1700000001,20\n1700000002,30\n";
+        let (_tmp, path) = write_temp_csv(csv);
+        let mapping = ColumnMapping {
+            time_column: "epoch".into(),
+            data_columns: vec!["val".into()],
+        };
+        let df = read_csv_with_mapping(&path, &mapping).unwrap();
+        assert_eq!(df.height(), 3);
+
+        let time = df.column("time").unwrap().f64().unwrap();
+        assert!((time.get(0).unwrap() - 1_700_000_000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_read_csv_datetime_string_parsed_to_epoch() {
+        let csv = "datetime,sensor\n2024-01-15 10:30:00,1.5\n2024-01-15 10:30:01,2.5\n";
+        let (_tmp, path) = write_temp_csv(csv);
+        let mapping = ColumnMapping {
+            time_column: "datetime".into(),
+            data_columns: vec!["sensor".into()],
+        };
+        let df = read_csv_with_mapping(&path, &mapping).unwrap();
+        assert_eq!(df.height(), 2);
+
+        let time = df.column("time").unwrap().f64().unwrap();
+        let t0 = time.get(0).unwrap();
+        let t1 = time.get(1).unwrap();
+        // Second row should be exactly 1 second later
+        assert!((t1 - t0 - 1.0).abs() < 1e-3);
+        // Epoch should be around 1705 billion ms / 1000 = ~1.7 billion
+        assert!(t0 > 1_700_000_000.0);
+    }
+
+    #[test]
+    fn test_read_csv_missing_column_returns_error() {
+        let csv = "time,x\n1.0,2.0\n";
+        let (_tmp, path) = write_temp_csv(csv);
+        let mapping = ColumnMapping {
+            time_column: "time".into(),
+            data_columns: vec!["x".into(), "nonexistent".into()],
+        };
+        let result = read_csv_with_mapping(&path, &mapping);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_csv_missing_time_column_returns_error() {
+        let csv = "a,b\n1.0,2.0\n";
+        let (_tmp, path) = write_temp_csv(csv);
+        let mapping = ColumnMapping {
+            time_column: "time".into(),
+            data_columns: vec!["a".into()],
+        };
+        let result = read_csv_with_mapping(&path, &mapping);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_csv_null_handling_preserves_nulls() {
+        // CSV with a missing value — Polars reads it as null
+        let csv = "time,x,y\n1.0,10.0,20.0\n2.0,,40.0\n3.0,30.0,\n";
+        let (_tmp, path) = write_temp_csv(csv);
+        let mapping = ColumnMapping {
+            time_column: "time".into(),
+            data_columns: vec!["x".into(), "y".into()],
+        };
+        let df = read_csv_with_mapping(&path, &mapping).unwrap();
+        assert_eq!(df.height(), 3);
+
+        let x = df.column("x").unwrap().f64().unwrap();
+        // Row 1 (index 1) has null x
+        assert!(x.get(1).is_none());
+        // Row 0 and 2 have values
+        assert!((x.get(0).unwrap() - 10.0).abs() < 1e-6);
+        assert!((x.get(2).unwrap() - 30.0).abs() < 1e-6);
+
+        let y = df.column("y").unwrap().f64().unwrap();
+        assert!(y.get(2).is_none());
+    }
+
+    #[test]
+    fn test_read_csv_single_row() {
+        let csv = "time,sensor\n42.5,99.9\n";
+        let (_tmp, path) = write_temp_csv(csv);
+        let mapping = ColumnMapping {
+            time_column: "time".into(),
+            data_columns: vec!["sensor".into()],
+        };
+        let df = read_csv_with_mapping(&path, &mapping).unwrap();
+        assert_eq!(df.height(), 1);
+        let time = df.column("time").unwrap().f64().unwrap();
+        assert!((time.get(0).unwrap() - 42.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_read_csv_file_not_found() {
+        let mapping = ColumnMapping {
+            time_column: "time".into(),
+            data_columns: vec!["x".into()],
+        };
+        let result = read_csv_with_mapping("/nonexistent/path.csv", &mapping);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_csv_selects_only_mapped_columns() {
+        let csv = "time,a,b,c,d\n1.0,10,20,30,40\n2.0,11,21,31,41\n";
+        let (_tmp, path) = write_temp_csv(csv);
+        let mapping = ColumnMapping {
+            time_column: "time".into(),
+            data_columns: vec!["b".into(), "d".into()],
+        };
+        let df = read_csv_with_mapping(&path, &mapping).unwrap();
+        // Should only have time, b, d
+        assert_eq!(df.width(), 3);
+        let col_names: Vec<String> = df
+            .get_column_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(col_names.contains(&"time".to_string()));
+        assert!(col_names.contains(&"b".to_string()));
+        assert!(col_names.contains(&"d".to_string()));
+        assert!(!col_names.contains(&"a".to_string()));
+        assert!(!col_names.contains(&"c".to_string()));
+    }
 }

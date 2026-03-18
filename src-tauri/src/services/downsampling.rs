@@ -125,4 +125,77 @@ mod tests {
         let indices = lttb_indices(&time, &values, 10);
         assert_eq!(indices, vec![0, 1, 2]);
     }
+
+    #[test]
+    fn test_lttb_indices_exact_threshold() {
+        // When threshold == n, should return all indices
+        let time: Vec<f64> = (0..50).map(|i| i as f64).collect();
+        let values: Vec<f64> = time.iter().map(|t| t * 2.0).collect();
+        let indices = lttb_indices(&time, &values, 50);
+        let expected: Vec<usize> = (0..50).collect();
+        assert_eq!(indices, expected);
+    }
+
+    #[test]
+    fn test_lttb_empty_input() {
+        let time: Vec<f64> = vec![];
+        let values: Vec<f64> = vec![];
+        let indices = lttb_indices(&time, &values, 10);
+        assert!(indices.is_empty());
+    }
+
+    #[test]
+    fn test_lttb_single_point() {
+        let time = vec![1.0];
+        let values = vec![5.0];
+        let indices = lttb_indices(&time, &values, 10);
+        assert_eq!(indices, vec![0]);
+    }
+
+    #[test]
+    fn test_lttb_two_points() {
+        let time = vec![1.0, 2.0];
+        let values = vec![5.0, 10.0];
+        let indices = lttb_indices(&time, &values, 10);
+        assert_eq!(indices, vec![0, 1]);
+    }
+
+    #[test]
+    fn test_lttb_threshold_less_than_3_returns_all() {
+        // threshold < 3 returns all indices
+        let time: Vec<f64> = (0..100).map(|i| i as f64).collect();
+        let values: Vec<f64> = time.iter().map(|t| t.sin()).collect();
+        let indices = lttb_indices(&time, &values, 2);
+        assert_eq!(indices.len(), 100);
+    }
+
+    #[test]
+    fn test_lttb_preserves_first_and_last_indices() {
+        let time: Vec<f64> = (0..500).map(|i| i as f64).collect();
+        let values: Vec<f64> = time.iter().map(|t| (t * 0.05).sin()).collect();
+        let indices = lttb_indices(&time, &values, 50);
+        assert_eq!(indices[0], 0);
+        assert_eq!(*indices.last().unwrap(), 499);
+    }
+
+    #[test]
+    fn test_lttb_indices_are_sorted() {
+        let time: Vec<f64> = (0..1000).map(|i| i as f64).collect();
+        let values: Vec<f64> = time.iter().map(|t| (t * 0.01).sin()).collect();
+        let indices = lttb_indices(&time, &values, 100);
+        for i in 1..indices.len() {
+            assert!(indices[i] > indices[i - 1], "Indices must be strictly increasing");
+        }
+    }
+
+    #[test]
+    fn test_lttb_indices_within_bounds() {
+        let n = 2000;
+        let time: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let values: Vec<f64> = time.iter().map(|t| (t * 0.1).cos()).collect();
+        let indices = lttb_indices(&time, &values, 200);
+        for &idx in &indices {
+            assert!(idx < n as usize, "Index {} out of bounds (n={})", idx, n);
+        }
+    }
 }
