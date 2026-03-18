@@ -3,10 +3,12 @@
 	import type { AppMode } from '$lib/stores/modeStore';
 	import { precision, PRECISION_OPTIONS } from '$lib/stores/viewStore';
 	import type { PrecisionLevel } from '$lib/stores/viewStore';
+	import { mergeSeriesMode } from '$lib/stores/uiStore';
 
 	interface Props {
 		hasUnsaved?: boolean;
 		hasProject?: boolean;
+		multiFile?: boolean;
 		onopenfile?: () => void;
 		onsave?: () => void;
 		onexport?: () => void;
@@ -14,7 +16,7 @@
 		onclose?: () => void;
 	}
 
-	let { hasUnsaved = false, hasProject = false, onopenfile, onsave, onexport, onexportviewport, onclose }: Props = $props();
+	let { hasUnsaved = false, hasProject = false, multiFile = false, onopenfile, onsave, onexport, onexportviewport, onclose }: Props = $props();
 
 	function setMode(newMode: AppMode) {
 		mode.set(newMode);
@@ -56,6 +58,18 @@
 		</select>
 	</div>
 
+	{#if multiFile}
+		<div class="toolbar-group merge-group">
+			<button
+				class:active={$mergeSeriesMode}
+				onclick={() => mergeSeriesMode.update((v) => !v)}
+				title="合併同名通道為同一圖例項目"
+			>
+				{$mergeSeriesMode ? '分離通道' : '合併通道'}
+			</button>
+		</div>
+	{/if}
+
 	<div class="toolbar-group">
 		<button onclick={() => onexportviewport?.()}>匯出視野</button>
 		<button onclick={() => onexport?.()}>匯出全部</button>
@@ -86,6 +100,11 @@
 	}
 
 	.precision-group {
+		border-left: 1px solid var(--border, #e0e0e0);
+		padding: 0 0.75rem;
+	}
+
+	.merge-group {
 		border-left: 1px solid var(--border, #e0e0e0);
 		padding: 0 0.75rem;
 	}

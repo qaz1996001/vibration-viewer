@@ -31,6 +31,7 @@ export interface InteractionState {
 	legendSelected?: Record<string, boolean>;
 	fileColors?: Record<string, string>;
 	selectedAnnotationId?: string | null;
+	mergeSeriesMode?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -54,6 +55,7 @@ export function createSeriesConfig(
 	interactionState?: InteractionState
 ): { series: LineSeriesOption[]; legendData: string[] } {
 	const isMultiFile = datasetOrder.length > 1;
+	const mergeMode = interactionState?.mergeSeriesMode ?? false;
 	const fColors = interactionState?.fileColors;
 
 	const series: LineSeriesOption[] = [];
@@ -74,9 +76,13 @@ export function createSeriesConfig(
 		for (const channelName of channelNames) {
 			const values = chunk.channels[channelName];
 			const pairedData: [number, number][] = chunk.time.map((t, i) => [t, values[i]]);
-			const seriesName = isMultiFile ? `${ds.file_name}:${channelName}` : channelName;
+			const seriesName = (isMultiFile && !mergeMode)
+				? `${ds.file_name}:${channelName}`
+				: channelName;
 
-			legendData.push(seriesName);
+			if (!legendData.includes(seriesName)) {
+				legendData.push(seriesName);
+			}
 
 			const channelColor = fileColor ?? getChannelColor(colorIdx);
 
@@ -149,12 +155,35 @@ export function createToolboxConfig(
 			trigger: 'axis',
 			axisPointer: { type: 'cross' },
 			formatter: (params: unknown) => {
+				// Handle markPoint/markArea item tooltips
+				if (!Array.isArray(params)) {
+					const p = params as {
+						componentType?: string;
+						name?: string;
+						value?: [number, number] | number;
+						data?: {
+							coord?: [number, number];
+							xAxis?: number;
+							name?: string;
+						};
+					};
+					if (p.componentType === 'markPoint') {
+						const coord = p.data?.coord;
+						const timeStr = coord ? formatTime(coord[0]) : '';
+						const valStr = coord ? Number(coord[1]).toFixed(6) : '';
+						return `<strong>${p.name ?? ''}</strong><br/>Time: ${timeStr}<br/>Value: ${valStr}<br/><em>Point annotation</em>`;
+					}
+					if (p.componentType === 'markArea') {
+						return `<strong>${p.name ?? ''}</strong><br/><em>Range annotation</em>`;
+					}
+					return '';
+				}
 				const items = params as Array<{
 					value?: [number, number];
 					marker?: string;
 					seriesName?: string;
 				}>;
-				if (!Array.isArray(items) || items.length === 0) return '';
+				if (items.length === 0) return '';
 				const time = items[0].value?.[0];
 				const timeStr = time !== undefined ? formatTime(time) : '';
 				let html = `<strong>${timeStr}</strong><br/>`;
@@ -396,6 +425,9 @@ interface MarkPointData {
 		color: string;
 		fontSize: number;
 	};
+	tooltip: {
+		formatter: string;
+	};
 }
 
 /** Map a single Point annotation to ECharts markPoint data format. */
@@ -424,6 +456,9 @@ function mapPointToMarkData(a: Annotation): MarkPointData {
 			padding: [4, 8],
 			color: '#333',
 			fontSize: 12
+		},
+		tooltip: {
+			formatter: `<strong>${a.label}</strong><br/>Time: ${formatTime(pt.time)}<br/>Value: ${Number(pt.value).toFixed(6)}<br/><em>Point annotation</em>`
 		}
 	};
 }
@@ -448,7 +483,8 @@ type MarkAreaPair = [
 		xAxis: number;
 		name: string;
 		itemStyle: { color: string; opacity: number };
-		label: { show: boolean; position: string };
+		label: { show: boolean; position: string; formatter: string; color: string; fontSize: number };
+		tooltip: { formatter: string };
 	},
 	{ xAxis: number }
 ];
@@ -474,7 +510,16 @@ function buildMarkAreas(
 						color: a.color,
 						opacity: isSelected ? 0.4 : 0.2
 					},
-					label: { show: true, position: 'insideTop' }
+					label: {
+						show: true,
+						position: 'insideTop',
+						formatter: a.label,
+						color: '#333',
+						fontSize: 11
+					},
+					tooltip: {
+						formatter: `<strong>${a.label}</strong><br/>From: ${formatTime(range.start_time)}<br/>To: ${formatTime(range.end_time)}<br/><em>Range annotation</em>`
+					}
 				},
 				{ xAxis: range.end_time }
 			] as MarkAreaPair;

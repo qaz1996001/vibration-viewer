@@ -5,6 +5,7 @@
 	import { chunks, datasets, datasetOrder, globalTimeRange, fileColors } from '$lib/stores/dataStore';
 	import { annotations, selectedId } from '$lib/stores/annotationStore';
 	import { mode, rangeFirstClick } from '$lib/stores/modeStore';
+	import { mergeSeriesMode } from '$lib/stores/uiStore';
 	import { createOverviewOption } from './chartOptions';
 	import { createChartInstance, disposeChart, setupResizeObserver } from '$lib/utils/useChart';
 	import {
@@ -111,6 +112,7 @@
 		const currentGlobalRange = $globalTimeRange;
 		const currentSelectedId = $selectedId;
 		const currentFileColors = $fileColors;
+		const currentMergeMode = $mergeSeriesMode;
 		const chart = chartInstance;
 
 		if (!chart || currentOrder.length === 0) return;
@@ -129,7 +131,8 @@
 			{
 				legendSelected,
 				fileColors: currentFileColors,
-				selectedAnnotationId: currentSelectedId
+				selectedAnnotationId: currentSelectedId,
+				mergeSeriesMode: currentMergeMode
 			}
 		);
 		chart.setOption(option, { notMerge: true });

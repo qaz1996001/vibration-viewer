@@ -249,6 +249,7 @@
 		onclose={handleCloseProject}
 		hasUnsaved={$dirty}
 		hasProject={$projectOpen}
+		multiFile={$datasetOrder.length > 1}
 	/>
 
 	<div class="content">

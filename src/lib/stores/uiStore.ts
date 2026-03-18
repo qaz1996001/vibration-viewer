@@ -35,3 +35,6 @@ export const zoomEnd = writable<number>(100);
 
 export const sidebarOpen = writable<boolean>(true);
 export const isAnnotationPanelOpen = writable<boolean>(true);
+
+/** When true, multi-file series use channel name only (merged legend) */
+export const mergeSeriesMode = writable<boolean>(false);
