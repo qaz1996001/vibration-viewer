@@ -29,6 +29,11 @@ pub fn run() {
             commands::annotation::save_annotations,
             commands::annotation::load_annotations,
             commands::export::export_data,
+            // Phase 2: project & device commands
+            commands::project::get_project_summary,
+            commands::project::close_project,
+            commands::device::get_device_chunk,
+            commands::device::get_device_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
