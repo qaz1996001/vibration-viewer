@@ -157,7 +157,7 @@
 							aria-label="Select color {c}"
 						></button>
 					{/each}
-					<input type="color" bind:value={color} class="color-input" />
+					<input type="color" bind:value={color} class="color-input" aria-label="Custom annotation color" />
 				</div>
 				<div class="form-actions">
 					<button type="button" class="btn-cancel" onclick={() => oncancel?.()}>Cancel</button>
@@ -188,20 +188,20 @@
 							aria-label="Select color {c}"
 						></button>
 					{/each}
-					<input type="color" bind:value={editColor} class="color-input" />
+					<input type="color" bind:value={editColor} class="color-input" aria-label="Custom annotation color" />
 				</div>
 				{#if ann.annotation_type.type === 'Point'}
 					<div class="offset-controls">
 						<span class="offset-label">Label Offset</span>
 						<div class="offset-row">
 							<span class="offset-axis">X</span>
-							<button type="button" class="offset-btn" onclick={() => (editOffsetX -= 5)}>&#8592;</button>
-							<input type="number" bind:value={editOffsetX} step="5" class="offset-input" />
-							<button type="button" class="offset-btn" onclick={() => (editOffsetX += 5)}>&#8594;</button>
+							<button type="button" class="offset-btn" onclick={() => (editOffsetX -= 5)} aria-label="Move label left">&#8592;</button>
+							<input type="number" bind:value={editOffsetX} step="5" class="offset-input" aria-label="Label X offset" />
+							<button type="button" class="offset-btn" onclick={() => (editOffsetX += 5)} aria-label="Move label right">&#8594;</button>
 							<span class="offset-axis">Y</span>
-							<button type="button" class="offset-btn" onclick={() => (editOffsetY -= 5)}>&#8593;</button>
-							<input type="number" bind:value={editOffsetY} step="5" class="offset-input" />
-							<button type="button" class="offset-btn" onclick={() => (editOffsetY += 5)}>&#8595;</button>
+							<button type="button" class="offset-btn" onclick={() => (editOffsetY -= 5)} aria-label="Move label up">&#8593;</button>
+							<input type="number" bind:value={editOffsetY} step="5" class="offset-input" aria-label="Label Y offset" />
+							<button type="button" class="offset-btn" onclick={() => (editOffsetY += 5)} aria-label="Move label down">&#8595;</button>
 						</div>
 					</div>
 				{/if}
@@ -217,15 +217,16 @@
 				role="button"
 				tabindex="0"
 				onclick={() => handleSelect(ann)}
-				onkeydown={(e) => e.key === 'Enter' && handleSelect(ann)}
+				onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), handleSelect(ann))}
+				aria-label="Annotation: {ann.label}"
 			>
-				<span class="color-dot" style="background: {ann.color}"></span>
+				<span class="color-dot" style="background: {ann.color}" aria-hidden="true"></span>
 				<div class="annotation-info">
 					<span class="ann-label">{ann.label}</span>
 					<span class="type">{formatType(ann)}</span>
 				</div>
 				<button class="edit-btn" onclick={(e) => startEdit(e, ann)} aria-label="Edit">&#9998;</button>
-				<button class="delete-btn" onclick={(e) => handleDelete(e, ann.id)}>&times;</button>
+				<button class="delete-btn" onclick={(e) => handleDelete(e, ann.id)} aria-label="Delete annotation {ann.label}">&times;</button>
 			</div>
 		{/if}
 	{:else}

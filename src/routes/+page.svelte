@@ -435,7 +435,7 @@
 	/>
 {/if}
 
-<main class="app-layout">
+<main class="app-layout" id="main-content">
 	<Toolbar
 		onopenfile={handleOpenFile}
 		onopenproject={handleOpenProject}
@@ -453,9 +453,9 @@
 	<div class="content">
 		<div class="main-area">
 			{#if $loading}
-				<div class="status-message">Loading...</div>
+				<div class="status-message" role="status" aria-live="polite">Loading...</div>
 			{:else if $error}
-				<div class="status-message error">{$error}</div>
+				<div class="status-message error" role="alert" aria-live="assertive">{$error}</div>
 			{:else if hasData}
 				<section class="section">
 					<h3>Overview</h3>

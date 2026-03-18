@@ -7,7 +7,7 @@
 	--surface-hover: #f0f0f0;
 	--surface-active: #e0e0ff;
 	--text-primary: #333;
-	--text-secondary: #666;
+	--text-secondary: #595959;
 	font-family:
 		-apple-system,
 		BlinkMacSystemFont,
@@ -28,4 +28,42 @@ body {
 	color: var(--text-primary);
 	background: white;
 	overflow: hidden;
+}
+
+/* A11y: Focus indicators for keyboard navigation (WCAG 2.4.7) */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[role='button']:focus-visible,
+a:focus-visible {
+	outline: 2px solid var(--primary, #4a90d9);
+	outline-offset: 2px;
+}
+
+/* A11y: Skip link (WCAG 2.4.1) */
+.skip-link {
+	position: absolute;
+	top: -100%;
+	left: 0;
+	background: var(--primary, #4a90d9);
+	color: white;
+	padding: 0.5rem 1rem;
+	z-index: 1000;
+	font-size: 0.9rem;
+	text-decoration: none;
+}
+.skip-link:focus {
+	top: 0;
+}
+
+/* A11y: Respect reduced motion preference (WCAG 2.3.3) */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
 }

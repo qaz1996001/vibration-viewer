@@ -50,9 +50,10 @@
 				role="button"
 				tabindex="0"
 				onclick={() => handleSelect(device.id)}
-				onkeydown={(e) => e.key === 'Enter' && handleSelect(device.id)}
+				onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), handleSelect(device.id))}
+				aria-label="Select device {device.name}"
 			>
-				<div class="device-icon">
+				<div class="device-icon" aria-hidden="true">
 					<span class="device-dot"></span>
 				</div>
 				<div class="device-info">

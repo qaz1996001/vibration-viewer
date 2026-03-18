@@ -49,7 +49,8 @@
 					role="button"
 					tabindex="0"
 					onclick={() => handleSelect(id)}
-					onkeydown={(e) => e.key === 'Enter' && handleSelect(id)}
+					onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), handleSelect(id))}
+					aria-label="Select file {ds.file_name}"
 				>
 					<button
 						type="button"
@@ -74,7 +75,7 @@
 						<span class="file-name">{ds.file_name}</span>
 						<span class="file-meta">{ds.total_points.toLocaleString()} pts</span>
 					</div>
-					<button class="remove-btn" onclick={(e) => handleRemove(e, id)}>&times;</button>
+					<button class="remove-btn" onclick={(e) => handleRemove(e, id)} aria-label="Remove file {ds.file_name}">&times;</button>
 				</div>
 			{/if}
 		{/each}

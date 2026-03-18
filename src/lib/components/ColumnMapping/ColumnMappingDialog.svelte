@@ -85,11 +85,47 @@
 
 	/** $derived: 是否可按確認（需有 time column 且至少選一個 data column） */
 	let canConfirm = $derived(timeColumn !== '' && selectedColumns.size > 0);
+
+	/** Dialog element reference for focus trap */
+	let dialogEl: HTMLDivElement;
+
+	import { onMount } from 'svelte';
+
+	onMount(() => {
+		// Focus first interactive element on open
+		const firstInput = dialogEl?.querySelector('select, input, button') as HTMLElement | null;
+		firstInput?.focus();
+	});
+
+	/** Handle Escape key to close dialog + focus trap */
+	function handleOverlayKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			oncancel();
+			return;
+		}
+		// Focus trap: Tab/Shift+Tab cycle within dialog
+		if (e.key === 'Tab') {
+			const focusable = dialogEl?.querySelectorAll(
+				'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+			) as NodeListOf<HTMLElement>;
+			if (!focusable || focusable.length === 0) return;
+			const first = focusable[0];
+			const last = focusable[focusable.length - 1];
+			if (e.shiftKey && document.activeElement === first) {
+				e.preventDefault();
+				last.focus();
+			} else if (!e.shiftKey && document.activeElement === last) {
+				e.preventDefault();
+				first.focus();
+			}
+		}
+	}
 </script>
 
-<div class="overlay" role="dialog" aria-modal="true">
-	<div class="dialog">
-		<h3>Column Mapping</h3>
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<div class="overlay" role="dialog" aria-modal="true" aria-labelledby="mapping-dialog-title" tabindex="-1" onkeydown={handleOverlayKeydown}>
+	<div class="dialog" bind:this={dialogEl}>
+		<h3 id="mapping-dialog-title">Column Mapping</h3>
 		<p class="file-info">
 			{filePath.split(/[\\/]/).pop()} — {rowCount.toLocaleString()} rows,
 			{columns.length} columns
@@ -104,11 +140,11 @@
 			</select>
 		</div>
 
-		<div class="field">
-			<span class="field-label">Data Columns</span>
+		<div class="field" role="group" aria-labelledby="data-columns-label">
+			<span class="field-label" id="data-columns-label">Data Columns</span>
 			<div class="select-actions">
-				<button type="button" class="link-btn" onclick={selectAll}>All</button>
-				<button type="button" class="link-btn" onclick={selectNone}>None</button>
+				<button type="button" class="link-btn" onclick={selectAll} aria-label="Select all data columns">All</button>
+				<button type="button" class="link-btn" onclick={selectNone} aria-label="Deselect all data columns">None</button>
 			</div>
 			<div class="column-list">
 				{#each availableDataColumns as col}

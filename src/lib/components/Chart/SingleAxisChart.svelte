@@ -47,7 +47,7 @@
 	});
 </script>
 
-<div bind:this={chartContainer} class="chart-container"></div>
+<div bind:this={chartContainer} class="chart-container" role="img" aria-label="Channel chart: {channelName}"></div>
 
 <style>
 	.chart-container {

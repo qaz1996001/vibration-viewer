@@ -187,7 +187,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div bind:this={chartContainer} class="chart-container"></div>
+<div bind:this={chartContainer} class="chart-container" role="img" aria-label="Vibration timeseries overview chart"></div>
 
 <style>
 	.chart-container {
