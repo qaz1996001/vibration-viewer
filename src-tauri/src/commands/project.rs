@@ -1,44 +1,43 @@
-use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::error::AppError;
-use crate::state::AppState;
+use crate::models::project::*;
+use crate::state::{AppState, ProjectContext};
 
-/// Summary of an open project, returned to frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectSummary {
-    pub project_type: String,
-    pub device_count: usize,
-    pub device_ids: Vec<String>,
-    pub total_sources: usize,
-}
-
-/// Get current project summary (derives from existing datasets)
+/// Get current project summary (derives devices from loaded datasets + project context)
 #[tauri::command]
-pub fn get_project_summary(
-    state: State<AppState>,
-) -> Result<ProjectSummary, AppError> {
+pub fn get_project_summary(state: State<AppState>) -> Result<ProjectInfo, AppError> {
+    let project = state.project.read().map_err(|_| AppError::LockPoisoned)?;
     let datasets = state.datasets.read().map_err(|_| AppError::LockPoisoned)?;
 
-    let device_ids: Vec<String> = datasets.keys().cloned().collect();
-    let device_count = device_ids.len();
+    let devices: Vec<DeviceInfo> = datasets
+        .iter()
+        .map(|(id, entry)| DeviceInfo {
+            id: id.clone(),
+            name: entry.metadata.file_name.clone(),
+            sources: vec![DataSource {
+                file_path: entry.metadata.file_path.clone(),
+                file_name: entry.metadata.file_name.clone(),
+                source_type: DataSourceType::Csv,
+            }],
+            channel_schema: ChannelSchema::default(),
+        })
+        .collect();
 
-    Ok(ProjectSummary {
-        project_type: if device_count <= 1 {
-            "single_file".into()
-        } else {
-            "multi_file".into()
-        },
-        device_count,
-        device_ids,
-        total_sources: device_count, // 1 source per device for now
+    Ok(ProjectInfo {
+        project_type: project.project_type.clone(),
+        devices,
+        sensor_mapping: project.sensor_mapping.clone(),
+        metadata: project.metadata.clone(),
     })
 }
 
-/// Close current project -- clears all loaded datasets
+/// Close current project -- clears all loaded datasets and resets project context
 #[tauri::command]
 pub fn close_project(state: State<AppState>) -> Result<(), AppError> {
     let mut datasets = state.datasets.write().map_err(|_| AppError::LockPoisoned)?;
+    let mut project = state.project.write().map_err(|_| AppError::LockPoisoned)?;
     datasets.clear();
+    *project = ProjectContext::default();
     Ok(())
 }

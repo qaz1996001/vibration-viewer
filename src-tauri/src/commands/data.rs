@@ -52,6 +52,18 @@ pub fn load_vibration_data(
             dataframe: df,
         },
     );
+    drop(datasets);
+
+    // Update project context
+    {
+        let mut project_ctx = state.project.write().map_err(|_| AppError::LockPoisoned)?;
+        if project_ctx.metadata.created_at.is_empty() {
+            project_ctx.metadata.name = metadata.file_name.clone();
+            project_ctx.metadata.created_at = "auto".into();
+        }
+        // Single-file mode with multi-file overlay; future: upgrade to AidpsFolder/VibprojFile
+        project_ctx.project_type = crate::models::project::ProjectType::SingleFile;
+    }
 
     Ok(metadata)
 }
