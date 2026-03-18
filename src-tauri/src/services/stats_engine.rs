@@ -1,8 +1,25 @@
+//! 振动数据统计计算引擎。
+//!
+//! 对每个 channel (axis) 的 Polars [`Series`] 计算三类统计指标:
+//! - **基本统计** ([`compute_basic_stats`]): 均值、标准差、变异系数
+//! - **分布统计** ([`compute_distribution_stats`]): 最小值、四分位数、中位数、最大值、IQR
+//! - **形状统计** ([`compute_shape_stats`]): 偏度 (skewness)、峰度 (kurtosis)
+//!
+//! 所有函数在输入为空或数据不足时返回 `f64::NAN`，而非 panic。
+
 use polars::prelude::*;
 
 use crate::error::AppError;
 use crate::models::statistics::*;
 
+/// 计算单个 channel 的基本统计量: 均值、标准差 (ddof=1)、变异系数 (CV%)。
+///
+/// - 空 Series 返回 count=0，其余字段为 NaN
+/// - 均值接近零时 CV% 返回 NaN（避免除零导致 Inf）
+///
+/// # Parameters
+/// - `series`: Float64 类型的 Polars Series
+/// - `axis_name`: channel 名称，用于标识返回结果
 pub fn compute_basic_stats(series: &Series, axis_name: &str) -> Result<AxisBasicStats, AppError> {
     let count = series.len();
 
@@ -34,6 +51,14 @@ pub fn compute_basic_stats(series: &Series, axis_name: &str) -> Result<AxisBasic
     })
 }
 
+/// 计算单个 channel 的分布统计量: min, Q1, median, Q3, max, IQR。
+///
+/// 四分位数使用线性插值法（见 [`percentile`]），与 NumPy 默认行为一致。
+/// 空 Series 时所有字段返回 NaN。
+///
+/// # Parameters
+/// - `series`: Float64 类型的 Polars Series（不要求已排序，内部会排序）
+/// - `axis_name`: channel 名称
 pub fn compute_distribution_stats(
     series: &Series,
     axis_name: &str,
@@ -56,8 +81,14 @@ pub fn compute_distribution_stats(
     let sorted = series
         .sort(SortOptions::default())
         .map_err(|e| AppError::Statistics(format!("sort failed: {e}")))?;
-    let min = sorted.min::<f64>().unwrap_or(Some(f64::NAN)).unwrap_or(f64::NAN);
-    let max = sorted.max::<f64>().unwrap_or(Some(f64::NAN)).unwrap_or(f64::NAN);
+    let min = sorted
+        .min::<f64>()
+        .unwrap_or(Some(f64::NAN))
+        .unwrap_or(f64::NAN);
+    let max = sorted
+        .max::<f64>()
+        .unwrap_or(Some(f64::NAN))
+        .unwrap_or(f64::NAN);
     let median = sorted.median().unwrap_or(f64::NAN);
 
     let q1 = percentile(&sorted, 25.0)?;
@@ -74,11 +105,19 @@ pub fn compute_distribution_stats(
     })
 }
 
-/// NOTE: Polars 0.46 provides built-in `Series::skew(bias)` and
-/// `Series::kurtosis(fisher, bias)` via the `moment` feature flag
-/// (in polars-ops, trait `MomentSeries`). These use scipy-equivalent
-/// moment-based formulas and support bias correction. Consider switching
-/// to the built-in methods when this module is next refactored.
+/// 计算单个 channel 的形状统计量: 偏度 (skewness) 和峰度 (excess kurtosis)。
+///
+/// 使用 biased (population) 公式:
+/// - skewness = (1/n) * Σ((x - μ) / σ)³
+/// - excess kurtosis = (1/n) * Σ((x - μ) / σ)⁴ - 3
+///
+/// 在以下情况返回 NaN: 空 Series、n < 3、标准差为零。
+/// null 值通过 `.flatten()` 自动跳过。
+///
+/// # NOTE
+/// Polars 0.46 提供内置的 `Series::skew(bias)` 和 `Series::kurtosis(fisher, bias)`
+/// (需启用 `moment` feature)，使用 scipy 等效的矩公式。
+/// 下次重构时可考虑替换为内置方法。
 pub fn compute_shape_stats(series: &Series, axis_name: &str) -> Result<AxisShapeStats, AppError> {
     let n = series.len() as f64;
 
@@ -125,6 +164,14 @@ pub fn compute_shape_stats(series: &Series, axis_name: &str) -> Result<AxisShape
     })
 }
 
+/// 计算已排序 Series 的百分位数（线性插值法）。
+///
+/// 使用与 NumPy `np.percentile(a, q, interpolation='linear')` 相同的算法:
+/// 1. 计算浮点 rank = pct/100 * (n-1)
+/// 2. 取 floor 和 ceil 位置的值
+/// 3. 按 fractional part 线性插值
+///
+/// 空 Series 返回 NaN。
 fn percentile(sorted_series: &Series, pct: f64) -> Result<f64, AppError> {
     let ca = sorted_series
         .f64()
@@ -219,7 +266,10 @@ mod tests {
         let s = f64_series("x", &[-1.0, 1.0]);
         let stats = compute_basic_stats(&s, "x").unwrap();
         assert!(stats.mean.abs() < 1e-10);
-        assert!(stats.cv_percent.is_nan(), "cv_percent should be NaN when mean is near zero");
+        assert!(
+            stats.cv_percent.is_nan(),
+            "cv_percent should be NaN when mean is near zero"
+        );
     }
 
     // ─── compute_distribution_stats ───
@@ -269,8 +319,14 @@ mod tests {
         // std_dev==0 means skewness/kurtosis are undefined
         let s = f64_series("x", &[3.0, 3.0, 3.0, 3.0]);
         let stats = compute_shape_stats(&s, "x").unwrap();
-        assert!(stats.skewness.is_nan(), "skewness should be NaN when std_dev==0");
-        assert!(stats.kurtosis.is_nan(), "kurtosis should be NaN when std_dev==0");
+        assert!(
+            stats.skewness.is_nan(),
+            "skewness should be NaN when std_dev==0"
+        );
+        assert!(
+            stats.kurtosis.is_nan(),
+            "kurtosis should be NaN when std_dev==0"
+        );
     }
 
     #[test]
@@ -296,7 +352,10 @@ mod tests {
         // Right-skewed data: mostly small values with one large outlier
         let s = f64_series("x", &[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 100.0]);
         let stats = compute_shape_stats(&s, "x").unwrap();
-        assert!(stats.skewness > 0.0, "Expected positive skewness for right-skewed data");
+        assert!(
+            stats.skewness > 0.0,
+            "Expected positive skewness for right-skewed data"
+        );
     }
 
     #[test]
@@ -326,6 +385,9 @@ mod tests {
     #[test]
     fn test_percentile_empty_series() {
         let s = f64_series("x", &[]);
-        assert!(percentile(&s, 50.0).unwrap().is_nan(), "percentile of empty series should be NaN");
+        assert!(
+            percentile(&s, 50.0).unwrap().is_nan(),
+            "percentile of empty series should be NaN"
+        );
     }
 }

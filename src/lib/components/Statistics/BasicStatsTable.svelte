@@ -1,7 +1,18 @@
 <script lang="ts">
+	/**
+	 * BasicStatsTable - 統計數據顯示元件
+	 *
+	 * 以三張可展開的表格呈現 active dataset 的統計報告：
+	 * - Basic Statistics: count, mean, std_dev, CV%（預設展開）
+	 * - Distribution Statistics: min, Q1, median, Q3, max, IQR
+	 * - Shape Statistics: skewness, kurtosis
+	 *
+	 * 每張表格的行對應一個 channel（axis），由 Rust 端 compute_statistics 計算。
+	 */
 	import type { StatisticsReport } from '$lib/types/statistics';
 
 	interface Props {
+		/** 統計報告資料，包含 basic / distribution / shape 三種統計維度 */
 		stats: StatisticsReport;
 	}
 

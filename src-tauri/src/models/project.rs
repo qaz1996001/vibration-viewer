@@ -1,61 +1,85 @@
+//! 项目与设备数据模型。
+//!
+//! 定义项目结构（单文件 / AIDPS 文件夹 / .vibproj 档案）、设备信息、
+//! 数据源引用以及 channel 分组 schema，供前端 IPC 序列化使用。
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Project type determines how data was loaded
+/// 项目类型，决定数据的加载方式。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ProjectType {
-    /// Single CSV file opened directly
+    /// 直接打开单个 CSV 文件
     SingleFile,
-    /// AIDPS folder structure with history/ directory
+    /// AIDPS 文件夹结构（含 `history/` 目录）
     AidpsFolder,
-    /// .vibproj ZIP project file
+    /// `.vibproj` ZIP 项目档案
     VibprojFile,
 }
 
-/// A data source reference (CSV file, WAV file, etc.)
+/// 数据源引用，指向一个 CSV 或 WAV 文件。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataSource {
+    /// 数据文件的绝对路径
     pub file_path: String,
+    /// 文件名（不含目录）
     pub file_name: String,
+    /// 数据源类型（CSV / WAV）
     pub source_type: DataSourceType,
 }
 
+/// 数据源文件格式。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DataSourceType {
+    /// CSV 时序数据文件
     Csv,
+    /// WAV 音频/振动波形文件
     Wav,
 }
 
-/// Channel grouping schema (acceleration, extremes, VRMS, etc.)
+/// Channel 分组 schema，将 channel 名按物理量归类。
+///
+/// 例如加速度组 `"acceleration": ["x","y","z"]`，VRMS 组 `"vrms": ["vrms"]`。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChannelSchema {
-    /// Groups of channel names, e.g. {"acceleration": ["x","y","z"], "vrms": ["vrms"]}
+    /// 分组映射：group 名称 → 该组包含的 channel 名列表
     pub groups: HashMap<String, Vec<String>>,
 }
 
-/// Per-device state: each device has its own data sources, annotations, and stats
+/// 单个设备的完整信息，包括其数据源列表和 channel schema。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceInfo {
+    /// 设备唯一标识符
     pub id: String,
+    /// 设备显示名称
     pub name: String,
+    /// 该设备关联的数据源列表
     pub sources: Vec<DataSource>,
+    /// 该设备的 channel 分组定义
     pub channel_schema: ChannelSchema,
 }
 
-/// Project metadata
+/// 项目元数据（名称、创建时间、描述）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectMetadata {
+    /// 项目名称
     pub name: String,
+    /// 创建时间（ISO 8601 格式字符串）
     pub created_at: String,
+    /// 可选的项目描述
     pub description: Option<String>,
 }
 
-/// The root project state sent to frontend
+/// 项目根信息，传递给前端的完整项目状态。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectInfo {
+    /// 项目类型（单文件 / AIDPS / .vibproj）
     pub project_type: ProjectType,
+    /// 项目中的所有设备
     pub devices: Vec<DeviceInfo>,
+    /// sensor 名称 → device ID 的映射
     pub sensor_mapping: HashMap<String, String>,
+    /// 项目元数据
     pub metadata: ProjectMetadata,
 }
 
@@ -243,13 +267,25 @@ mod tests {
                     id: "device3".into(),
                     name: "Device 3".into(),
                     sources: vec![
-                        make_csv_source("history_20260101.csv", "/aidps/device3/history/history_20260101.csv"),
-                        make_csv_source("history_20260102.csv", "/aidps/device3/history/history_20260102.csv"),
-                        make_csv_source("history_20260103.csv", "/aidps/device3/history/history_20260103.csv"),
+                        make_csv_source(
+                            "history_20260101.csv",
+                            "/aidps/device3/history/history_20260101.csv",
+                        ),
+                        make_csv_source(
+                            "history_20260102.csv",
+                            "/aidps/device3/history/history_20260102.csv",
+                        ),
+                        make_csv_source(
+                            "history_20260103.csv",
+                            "/aidps/device3/history/history_20260103.csv",
+                        ),
                     ],
                     channel_schema: ChannelSchema {
                         groups: HashMap::from([
-                            ("acceleration".into(), vec!["x".into(), "y".into(), "z".into()]),
+                            (
+                                "acceleration".into(),
+                                vec!["x".into(), "y".into(), "z".into()],
+                            ),
                             ("vrms".into(), vec!["vrms".into()]),
                         ]),
                     },
@@ -258,13 +294,20 @@ mod tests {
                     id: "device7".into(),
                     name: "Device 7".into(),
                     sources: vec![
-                        make_csv_source("history_20260101.csv", "/aidps/device7/history/history_20260101.csv"),
-                        make_csv_source("history_20260102.csv", "/aidps/device7/history/history_20260102.csv"),
+                        make_csv_source(
+                            "history_20260101.csv",
+                            "/aidps/device7/history/history_20260101.csv",
+                        ),
+                        make_csv_source(
+                            "history_20260102.csv",
+                            "/aidps/device7/history/history_20260102.csv",
+                        ),
                     ],
                     channel_schema: ChannelSchema {
-                        groups: HashMap::from([
-                            ("acceleration".into(), vec!["x".into(), "y".into(), "z".into()]),
-                        ]),
+                        groups: HashMap::from([(
+                            "acceleration".into(),
+                            vec!["x".into(), "y".into(), "z".into()],
+                        )]),
                     },
                 },
             ],

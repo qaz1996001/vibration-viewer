@@ -1,3 +1,14 @@
+/**
+ * ECharts option 构建模块 — 将数据集、标注、交互状态转换为 ECharts 配置对象。
+ *
+ * 架构：
+ * - createOverviewOption: 多文件叠加总览图（主入口）
+ * - createSingleAxisOption: 单通道独立图
+ * - createSeriesConfig / createAxisConfig / createToolboxConfig / createDataZoomConfig: 子构建器
+ * - buildMarkPoints / buildMarkAreas / buildSelectedRangeHandles: 标注标记转换
+ *
+ * 所有函数为纯函数（无副作用），便于测试。
+ */
 import type {
 	EChartsOption,
 	LineSeriesOption,
@@ -18,30 +29,51 @@ import { formatTime } from '$lib/utils/formatTime';
 import { getChannelColor } from '$lib/constants/colors';
 
 // ---------------------------------------------------------------------------
-// Shared types for option-building parameters
+// 共享参数类型
 // ---------------------------------------------------------------------------
 
+/** 缩放控制参数 — 传递给 createOverviewOption 控制 dataZoom 和 xAxis 范围 */
 export interface ZoomOptions {
+	/** 全局时间范围（所有数据集的并集），设置 xAxis min/max */
 	globalTimeRange?: [number, number] | null;
+	/** dataZoom 起始百分比 (0-100) */
 	zoomStart?: number;
+	/** dataZoom 结束百分比 (0-100) */
 	zoomEnd?: number;
 }
 
+/** 交互状态参数 — 控制 legend 选中、文件颜色、标注高亮、系列合并 */
 export interface InteractionState {
+	/** legend 各系列的选中/隐藏状态 */
 	legendSelected?: Record<string, boolean>;
+	/** 每个数据集的颜色覆盖 */
 	fileColors?: Record<string, string>;
+	/** 当前选中的标注 ID — 选中的范围标注会加粗边界线 */
 	selectedAnnotationId?: string | null;
+	/** 多文件合并模式 — 启用时系列名不含文件名前缀 */
 	mergeSeriesMode?: boolean;
 }
 
 // ---------------------------------------------------------------------------
-// 1.6 — Sub-functions extracted from createOverviewOption
+// 子构建器 — 从 createOverviewOption 中抽取的独立构建函数
 // ---------------------------------------------------------------------------
 
 /**
- * Build the ECharts series array from loaded datasets and their chunks.
- * Each dataset + channel = one line series.
- * The first series in the list carries annotation markPoint/markArea/markLine.
+ * 构建 ECharts series 数组 — 每个「数据集 x 通道」生成一条折线系列。
+ *
+ * 命名规则：
+ * - 多文件模式（非合并）：`{fileName}:{channelName}`
+ * - 单文件或合并模式：`{channelName}`
+ *
+ * 标注标记（markPoint/markArea/markLine）只挂载在第一个 series 上，
+ * 避免标注在多个 series 上重复渲染。
+ *
+ * @param allChunks - 所有数据集的 chunk 映射
+ * @param allDatasets - 所有数据集的元信息映射
+ * @param datasetOrder - 数据集渲染顺序
+ * @param annotationMarks - 标注标记配置
+ * @param interactionState - 交互状态（颜色、合并模式等）
+ * @returns series 数组和 legend 数据名列表
  */
 export function createSeriesConfig(
 	allChunks: Record<string, TimeseriesChunk>,
@@ -114,7 +146,10 @@ export function createSeriesConfig(
 }
 
 /**
- * Build xAxis and yAxis configuration for the overview chart.
+ * 构建 xAxis / yAxis 配置。
+ * xAxis 使用 value 类型（epoch seconds）而非 time 类型，以支持多文件时间对齐。
+ * @param globalTimeRange - 全局时间范围，null 时使用 'dataMin'/'dataMax' 自适应
+ * @returns xAxis 和 yAxis 配置对象
  */
 export function createAxisConfig(
 	globalTimeRange?: [number, number] | null
@@ -139,7 +174,13 @@ export function createAxisConfig(
 }
 
 /**
- * Build toolbox, legend, grid, and tooltip configuration.
+ * 构建 tooltip、legend、toolbox、grid 四项 UI 配置。
+ * - tooltip: 自定义 formatter 区分标注项和普通数据轴
+ * - legend: 超过 6 项时自动切换为 scroll 类型
+ * - toolbox: 提供框选缩放和重置功能
+ * @param legendData - legend 显示的系列名列表
+ * @param legendSelected - 可选的 legend 选中状态（保留用户切换）
+ * @returns tooltip、legend、toolbox、grid 配置对象
  */
 export function createToolboxConfig(
 	legendData: string[],
@@ -155,7 +196,7 @@ export function createToolboxConfig(
 			trigger: 'axis',
 			axisPointer: { type: 'cross' },
 			formatter: (params: unknown) => {
-				// Handle markPoint/markArea item tooltips
+				// 非数组 params 表示 hover 在 markPoint/markArea 上，需特殊处理
 				if (!Array.isArray(params)) {
 					const p = params as {
 						componentType?: string;
@@ -218,7 +259,10 @@ export function createToolboxConfig(
 }
 
 /**
- * Build dataZoom components (slider + inside scroll).
+ * 构建 dataZoom 组件 — slider（底部滑块）+ inside（鼠标滚轮/拖拽缩放）。
+ * @param start - 起始百分比 (0-100)
+ * @param end - 结束百分比 (0-100)
+ * @returns dataZoom 配置数组
  */
 export function createDataZoomConfig(
 	start: number,
@@ -237,13 +281,23 @@ export function createDataZoomConfig(
 }
 
 // ---------------------------------------------------------------------------
-// Main entry — thin wrapper calling sub-functions
+// 主入口 — 组合子构建器输出完整 EChartsOption
 // ---------------------------------------------------------------------------
 
 /**
- * Multi-file overview chart option.
- * Each dataset + channel = one ECharts series.
- * Series name: "fileName:channelName" for multi-file, or just "channelName" for single file.
+ * 多文件叠加总览图的完整 ECharts 配置构建器。
+ *
+ * 将数据集 chunk、标注、缩放状态、交互状态组合为一个完整的 EChartsOption。
+ * 这是 TimeseriesChart 组件 $effect 中调用的核心函数。
+ *
+ * @param allChunks - 所有数据集的降采样 chunk
+ * @param allDatasets - 所有数据集元信息
+ * @param datasetOrder - 渲染顺序
+ * @param annotations - 当前标注列表
+ * @param pendingRangeLine - 范围标注模式下第一次点击的时间戳（显示虚线）
+ * @param zoomOptions - 缩放控制参数
+ * @param interactionState - 交互状态参数
+ * @returns 完整的 EChartsOption
  */
 export function createOverviewOption(
 	allChunks: Record<string, TimeseriesChunk>,
@@ -256,9 +310,10 @@ export function createOverviewOption(
 ): EChartsOption {
 	const selAnnId = interactionState?.selectedAnnotationId;
 
-	// Build annotation marks
+	// 构建 markLine: 合并「范围标注待确认虚线」和「选中范围的边界手柄线」
 	const markLineData: MarkLineOption['data'] = [];
 	if (pendingRangeLine !== null) {
+		// 范围标注第一次点击后显示红色虚线，提示用户第二次点击位置
 		(markLineData as unknown[]).push({
 			xAxis: pendingRangeLine,
 			lineStyle: { color: '#ff4444', type: 'dashed' as const, width: 2 },
@@ -320,9 +375,16 @@ export function createOverviewOption(
 }
 
 // ---------------------------------------------------------------------------
-// Single-axis chart option (unchanged interface)
+// 单通道独立图配置
 // ---------------------------------------------------------------------------
 
+/**
+ * 单通道独立图的 ECharts 配置构建器。
+ * 为指定通道渲染独立折线图，带 area 半透明填充和独立 dataZoom。
+ * @param chunk - 该数据集的降采样 chunk（含多通道，仅取 channelName 对应的）
+ * @param channelName - 要渲染的通道名
+ * @returns 完整的 EChartsOption
+ */
 export function createSingleAxisOption(
 	chunk: TimeseriesChunk,
 	channelName: string
@@ -397,10 +459,10 @@ export function createSingleAxisOption(
 }
 
 // ---------------------------------------------------------------------------
-// Annotation mark helpers
+// 标注标记转换 — Annotation -> ECharts markPoint/markArea/markLine 数据
 // ---------------------------------------------------------------------------
 
-/** Coordinate pair for mark data. */
+/** 点标注的 ECharts markPoint data 项类型 */
 interface MarkPointData {
 	coord: [number, number];
 	name: string;
@@ -430,7 +492,12 @@ interface MarkPointData {
 	};
 }
 
-/** Map a single Point annotation to ECharts markPoint data format. */
+/**
+ * 将单个 Point 标注转为 ECharts markPoint data 格式。
+ * 包含 pin 图标、标签偏移、背景样式和自定义 tooltip。
+ * @param a - Point 类型的标注
+ * @returns markPoint 数据项
+ */
 function mapPointToMarkData(a: Annotation): MarkPointData {
 	const pt = a.annotation_type as { type: 'Point'; time: number; value: number; axis: string };
 	return {
@@ -463,21 +530,30 @@ function mapPointToMarkData(a: Annotation): MarkPointData {
 	};
 }
 
-/** Overview chart: show ALL point annotations (no axis filter). */
+/**
+ * 构建总览图的点标注 markPoint 数据 — 显示所有 Point 标注（不按通道过滤）。
+ * @param annotations - 标注列表
+ * @returns markPoint data 数组
+ */
 function buildMarkPoints(annotations: Annotation[]): MarkPointData[] {
 	return annotations
 		.filter((a) => a.annotation_type.type === 'Point')
 		.map(mapPointToMarkData);
 }
 
-/** For SingleAxisChart: filter by specific channel axis. */
+/**
+ * 构建单轴图的点标注 markPoint 数据 — 仅包含属于指定通道的 Point 标注。
+ * @param annotations - 标注列表
+ * @param axis - 通道名（过滤条件）
+ * @returns 过滤后的 markPoint data 数组
+ */
 export function buildMarkPointsForAxis(annotations: Annotation[], axis: string): MarkPointData[] {
 	return annotations
 		.filter((a) => a.annotation_type.type === 'Point' && a.annotation_type.axis === axis)
 		.map(mapPointToMarkData);
 }
 
-/** Mark area pair type: [start-item, end-item]. */
+/** markArea 数据对类型：[起点配置, 终点配置]，定义一个高亮区间 */
 type MarkAreaPair = [
 	{
 		xAxis: number;
@@ -489,6 +565,13 @@ type MarkAreaPair = [
 	{ xAxis: number }
 ];
 
+/**
+ * 构建范围标注的 markArea 数据。
+ * 选中的标注 opacity 加深（0.4 vs 0.2）以提供视觉反馈。
+ * @param annotations - 标注列表
+ * @param selectedId - 当前选中的标注 ID
+ * @returns markArea data 数组
+ */
 function buildMarkAreas(
 	annotations: Annotation[],
 	selectedId?: string | null
@@ -526,13 +609,20 @@ function buildMarkAreas(
 		});
 }
 
-/** Vertical handle lines shown at the edges of the selected range annotation. */
+/** 选中范围标注边界的拖拽手柄线数据类型 */
 interface HandleLineData {
 	xAxis: number;
 	lineStyle: { color: string; width: number; type: 'solid' };
 	label: { show: boolean; formatter: string; position: string; color: string; fontSize: number };
 }
 
+/**
+ * 为选中的范围标注构建边界手柄线（竖直粗线 + 三角箭头）。
+ * 仅当有选中的 Range 标注时返回两条线（起点 + 终点），否则返回空数组。
+ * @param annotations - 标注列表
+ * @param selectedId - 当前选中的标注 ID
+ * @returns 手柄线 markLine data 数组（0 或 2 项）
+ */
 function buildSelectedRangeHandles(
 	annotations: Annotation[],
 	selectedId: string | null | undefined

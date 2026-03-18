@@ -1,16 +1,29 @@
 <script lang="ts">
+	/**
+	 * ViewportDataTable - 視窗範圍資料表格
+	 *
+	 * 以表格形式顯示當前 chart viewport 中的 TimeseriesChunk 資料。
+	 * 欄位由 chunk.channels 動態決定（支援任意數量的 data columns）。
+	 * 預設僅顯示前 200 筆，避免大量 DOM 節點影響效能。
+	 * 以 <details> 包裹，預設收合。
+	 */
 	import type { TimeseriesChunk } from '$lib/types/vibration';
 	import { formatTime } from '$lib/utils/formatTime';
 
 	interface Props {
+		/** 當前 viewport 的時序資料切片（含 time[] 與 channels Record） */
 		chunk: TimeseriesChunk;
+		/** 表格最大顯示行數，超過則截斷並顯示提示。預設 200 */
 		maxRows?: number;
 	}
 
 	let { chunk, maxRows = 200 }: Props = $props();
 
+	/** $derived: 從 chunk.channels 取得所有通道名稱作為表頭 */
 	let channelNames = $derived(Object.keys(chunk.channels));
+	/** $derived: chunk 中的總資料點數 */
 	let totalRows = $derived(chunk.time.length);
+	/** $derived: 實際顯示行數（取 totalRows 與 maxRows 的較小值） */
 	let displayedRows = $derived(Math.min(totalRows, maxRows));
 </script>
 

@@ -1,34 +1,68 @@
+//! 振动时序数据模型。
+//!
+//! 包含 CSV 列映射、文件预览、数据集元信息以及前端分块传输用的
+//! [`TimeseriesChunk`]。设计支持动态 CSV 列——用户通过
+//! [`ColumnMapping`] 指定时间列和数据列，无硬编码 x/y/z。
+
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+/// CSV 列映射配置，由用户在 `ColumnMappingDialog` 中选定。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnMapping {
+    /// 时间列名（将被解析为 epoch seconds）
     pub time_column: String,
+    /// 数据列名列表（如 `["accel_x", "accel_y", "accel_z"]`）
     pub data_columns: Vec<String>,
 }
 
+/// CSV 文件预览信息，用于两步加载流程的第一步。
+///
+/// 前端调用 `preview_csv_columns` 获取此结构后，弹出列映射对话框。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CsvPreview {
+    /// CSV 文件绝对路径
     pub file_path: String,
+    /// 文件中所有列名
     pub columns: Vec<String>,
+    /// 总行数（不含表头）
     pub row_count: usize,
 }
 
+/// 已加载的振动数据集元信息（不含实际数据，DataFrame 存于 [`AppState`]）。
+///
+/// 通过 IPC 传递给前端，前端据此请求分块数据。
+///
+/// [`AppState`]: crate::state::AppState
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VibrationDataset {
+    /// 数据集唯一标识符
     pub id: String,
+    /// CSV 文件绝对路径
     pub file_path: String,
+    /// 文件名（不含目录）
     pub file_name: String,
+    /// 数据总点数
     pub total_points: usize,
+    /// 时间范围 `(min_epoch, max_epoch)`，单位为 epoch seconds
     pub time_range: (f64, f64),
+    /// 用户选定的列映射配置
     pub column_mapping: ColumnMapping,
 }
 
+/// 时序数据分块，前端请求可视区间数据时返回。
+///
+/// `channels` 使用 [`IndexMap`] 以保持列的插入顺序（与用户选定的列顺序一致）。
+/// 当数据量超过阈值时，后端执行 LTTB 降采样，`is_downsampled` 标记为 `true`。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeseriesChunk {
+    /// 时间戳序列（epoch seconds）
     pub time: Vec<f64>,
+    /// channel 名称 → 数据值序列（与 `time` 等长，保持插入顺序）
     pub channels: IndexMap<String, Vec<f64>>,
+    /// 是否经过 LTTB 降采样
     pub is_downsampled: bool,
+    /// 降采样前的原始数据点数
     pub original_count: usize,
 }
 

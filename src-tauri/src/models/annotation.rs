@@ -1,34 +1,62 @@
+//! 标注（Annotation）数据模型。
+//!
+//! 支持两种标注类型：
+//! - **Point**：单点标注，标记某一时刻某一 channel 上的特定值
+//! - **Range**：区间标注，标记一段时间范围
+//!
+//! 标注以 JSON 文件（`.vibann.json`）持久化存储。
+
 use serde::{Deserialize, Serialize};
 
+/// 标注类型，使用 serde internally tagged (`"type"` 字段) 序列化。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AnnotationType {
+    /// 单点标注：标记时间轴上某一点的值
     Point {
+        /// 时间戳（epoch seconds）
         time: f64,
+        /// 该时刻的数据值
         value: f64,
+        /// 所属 channel 名称（如 `"accel_x"`）
         axis: String,
     },
+    /// 区间标注：标记一段时间范围
     Range {
+        /// 区间起始时间（epoch seconds）
         start_time: f64,
+        /// 区间结束时间（epoch seconds）
         end_time: f64,
     },
 }
 
+/// 单条标注记录，包含位置、样式和元数据。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Annotation {
+    /// 标注唯一标识符
     pub id: String,
+    /// 标注类型（Point 或 Range）
     pub annotation_type: AnnotationType,
+    /// 用户输入的标签文字
     pub label: String,
+    /// 标注颜色（CSS hex 格式，如 `"#ff0000"`）
     pub color: String,
+    /// 标签相对于标注点的 X 偏移量（像素）
     pub label_offset_x: f64,
+    /// 标签相对于标注点的 Y 偏移量（像素）
     pub label_offset_y: f64,
+    /// 创建时间（ISO 8601 格式字符串）
     pub created_at: String,
 }
 
+/// 标注文件的完整结构，对应 `.vibann.json` 的 JSON schema。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnnotationFile {
+    /// 文件格式版本号
     pub version: u32,
+    /// 关联的 dataset ID（可选，向后兼容）
     pub dataset_id: Option<String>,
+    /// 标注列表
     pub annotations: Vec<Annotation>,
 }
 

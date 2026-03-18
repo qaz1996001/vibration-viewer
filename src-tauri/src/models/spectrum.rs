@@ -1,11 +1,19 @@
+//! 频谱分析数据模型。
+//!
+//! 存储 FFT 频谱计算结果，用于频域分析展示。
+
 use serde::{Deserialize, Serialize};
 
-/// FFT spectrum data for a single time point
+/// 单个时间点的 FFT 频谱数据。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpectrumData {
+    /// 频率轴（Hz），与 `amplitudes` 等长
     pub frequencies: Vec<f64>,
+    /// 各频率对应的振幅值
     pub amplitudes: Vec<f64>,
+    /// 采样率（Hz）
     pub sample_rate: f64,
+    /// FFT 窗口大小（点数）
     pub fft_size: usize,
 }
 

@@ -1,3 +1,8 @@
+//! データエクスポートの IPC コマンド。
+//!
+//! ロード済みデータセットを CSV ファイルとして書き出す。
+//! オプションで時間範囲フィルタを適用できる。
+
 use polars::prelude::*;
 use tauri::State;
 
@@ -5,6 +10,25 @@ use crate::error::AppError;
 use crate::services::time_filter;
 use crate::state::AppState;
 
+/// データセットを CSV ファイルとしてエクスポートする。
+///
+/// 指定された時間範囲 (`start_time` / `end_time`) がある場合はフィルタを適用し、
+/// Polars `CsvWriter` で書き出す。時間範囲を省略すると全データをエクスポートする。
+///
+/// # Parameters
+/// - `dataset_id` — エクスポート対象のデータセット ID
+/// - `output_path` — 出力先 CSV ファイルの絶対パス
+/// - `start_time` — 開始時刻 (epoch seconds, `None` ならフィルタなし)
+/// - `end_time` — 終了時刻 (epoch seconds, `None` ならフィルタなし)
+/// - `state` — Tauri managed state ([`AppState`])
+///
+/// # Returns
+/// `String` — エクスポート先のファイルパス (`output_path` と同一)
+///
+/// # Errors
+/// - `AppError::DatasetNotFound` — 指定 ID のデータセットが未登録
+/// - `AppError::LockPoisoned` — state ロック取得失敗
+/// - ファイル作成・書き込みエラー
 #[tauri::command]
 pub fn export_data(
     dataset_id: String,

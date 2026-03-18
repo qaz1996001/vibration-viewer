@@ -1,15 +1,30 @@
 <script lang="ts">
+	/**
+	 * ColumnMappingDialog - CSV 欄位對應對話框
+	 *
+	 * 開檔流程的第二步：使用者從 CSV preview 結果中指定
+	 * 哪一欄是時間軸（time column）、哪些欄是數據通道（data columns）。
+	 *
+	 * 自動偵測邏輯：
+	 * - time column: 優先選取欄名含 "time" 的欄位
+	 * - data columns: 若有 x/y/z 欄位則預選，否則全選（排除 time）
+	 *
+	 * 確認後回傳 ColumnMapping 給父層呼叫 load_vibration_data IPC。
+	 */
 	import type { CsvPreview, ColumnMapping } from '$lib/types/vibration';
 
 	interface Props {
+		/** CSV 預覽資料（欄位名稱、行數、檔案路徑），由 preview_csv_columns IPC 回傳 */
 		preview: CsvPreview;
+		/** 使用者確認對應後的 callback，回傳 ColumnMapping */
 		onconfirm: (mapping: ColumnMapping) => void;
+		/** 使用者取消對話框 */
 		oncancel: () => void;
 	}
 
 	let { preview, onconfirm, oncancel }: Props = $props();
 
-	// Snapshot props at creation time (dialog is created fresh each time)
+	// 快照 props：dialog 每次都是全新建立，不需要響應式追蹤 preview 變化
 	// svelte-ignore state_referenced_locally
 	const columns = preview.columns;
 	// svelte-ignore state_referenced_locally
@@ -17,24 +32,28 @@
 	// svelte-ignore state_referenced_locally
 	const rowCount = preview.row_count;
 
-	// Auto-detect: pick first column with "time" in name, or first column
+	// 自動偵測 time column：優先匹配名稱含 "time" 的欄位，fallback 取第一欄
 	const defaultTimeCol = columns.find((c) => /time/i.test(c)) ?? columns[0] ?? '';
 
+	/** $state: 使用者選定的時間欄位 */
 	let timeColumn = $state(defaultTimeCol);
 
-	// Auto-select known columns (x, y, z) or all non-time columns
+	// 自動預選 data columns：若有 x/y/z 標準欄名則只選它們，否則全選（排除 time）
 	const knownDataCols = ['x', 'y', 'z'];
 	const autoSelected = columns.filter(
 		(c) => c !== defaultTimeCol && knownDataCols.includes(c.toLowerCase())
 	);
+	/** $state: 被勾選的數據欄位集合 */
 	let selectedColumns = $state<Set<string>>(
 		new Set(
 			autoSelected.length > 0 ? autoSelected : columns.filter((c) => c !== defaultTimeCol)
 		)
 	);
 
+	/** $derived: 排除 time column 後可供選擇的數據欄位 */
 	let availableDataColumns = $derived(columns.filter((c) => c !== timeColumn));
 
+	/** 切換單一 data column 的勾選狀態（需重建 Set 觸發 reactivity） */
 	function toggleColumn(col: string) {
 		selectedColumns = new Set(selectedColumns);
 		if (selectedColumns.has(col)) {
@@ -44,14 +63,17 @@
 		}
 	}
 
+	/** 全選所有可用 data columns */
 	function selectAll() {
 		selectedColumns = new Set(availableDataColumns);
 	}
 
+	/** 清除所有 data columns 選取 */
 	function selectNone() {
 		selectedColumns = new Set();
 	}
 
+	/** 確認送出：過濾已選欄位、組成 ColumnMapping 後呼叫 onconfirm */
 	function handleConfirm() {
 		const dataColumns = availableDataColumns.filter((c) => selectedColumns.has(c));
 		if (!timeColumn || dataColumns.length === 0) return;
@@ -61,6 +83,7 @@
 		});
 	}
 
+	/** $derived: 是否可按確認（需有 time column 且至少選一個 data column） */
 	let canConfirm = $derived(timeColumn !== '' && selectedColumns.size > 0);
 </script>
 

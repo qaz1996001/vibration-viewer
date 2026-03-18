@@ -1,34 +1,60 @@
 <script lang="ts">
+	/**
+	 * AnnotationPanel - 標註管理面板
+	 *
+	 * 提供標註的建立、編輯、刪除、選取功能。
+	 * 包含兩種表單模式：
+	 * - 新增模式：當 pendingAnnotation 存在時，顯示 inline 建立表單
+	 * - 編輯模式：點擊編輯按鈕後，就地展開編輯表單（含 label offset 調整）
+	 *
+	 * 點擊標註項目會選取該標註並觸發 chart 跳轉（onjumpto callback）。
+	 */
 	import { annotations, selectedId, removeAnnotation, updateAnnotation } from '$lib/stores/annotationStore';
 	import type { Annotation } from '$lib/types/annotation';
 	import { formatTime } from '$lib/utils/formatTime';
 	import { ANNOTATION_COLORS, DEFAULT_ANNOTATION_COLOR } from '$lib/constants/colors';
 
+	/**
+	 * 待確認的標註資料，由 chart 點擊/框選產生。
+	 * - type: 'point' 表示單點標註，'range' 表示時間範圍標註
+	 * - data: 包含對應的時間/值資訊
+	 */
 	interface PendingAnnotation {
 		type: 'point' | 'range';
 		data: { time?: number; value?: number; startTime?: number; endTime?: number };
 	}
 
 	interface Props {
+		/** 待確認標註，非 null 時顯示新增表單 */
 		pendingAnnotation?: PendingAnnotation | null;
+		/** 使用者確認新增標註時回傳 label + color */
 		onconfirm?: (data: { label: string; color: string }) => void;
+		/** 使用者取消新增標註 */
 		oncancel?: () => void;
+		/** 點擊標註項目時觸發，用於 chart 視窗跳轉至該標註位置 */
 		onjumpto?: (annotation: Annotation) => void;
 	}
 
 	let { pendingAnnotation = null, onconfirm, oncancel, onjumpto }: Props = $props();
 
+	/** $state: 新增表單的 label 輸入值 */
 	let label = $state('');
+	/** $state: 新增表單的顏色選擇 */
 	let color = $state(DEFAULT_ANNOTATION_COLOR);
 
-	// Edit state
+	// --- 編輯模式狀態 ---
+	/** $state: 正在編輯的標註 ID，null 表示未在編輯 */
 	let editingId = $state<string | null>(null);
+	/** $state: 編輯表單的 label 暫存值 */
 	let editLabel = $state('');
+	/** $state: 編輯表單的顏色暫存值 */
 	let editColor = $state('');
+	/** $state: 編輯表單的 label X 偏移量（僅 Point 標註） */
 	let editOffsetX = $state(0);
+	/** $state: 編輯表單的 label Y 偏移量（僅 Point 標註） */
 	let editOffsetY = $state(0);
 
-	// Reset form when a new pending annotation arrives
+	// $effect: 當新的 pendingAnnotation 傳入時，重設表單為初始值
 	$effect(() => {
 		if (pendingAnnotation) {
 			label = '';
@@ -36,6 +62,7 @@
 		}
 	});
 
+	/** 提交新增標註表單，驗證 label 非空後呼叫 onconfirm */
 	function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
 		if (label.trim()) {
@@ -43,6 +70,7 @@
 		}
 	}
 
+	/** 根據 pending annotation 類型產生人類可讀的描述文字 */
 	function pendingDescription(p: PendingAnnotation): string {
 		if (p.type === 'point' && p.data.time !== undefined) {
 			return `Point at ${formatTime(p.data.time)}`;
@@ -53,18 +81,21 @@
 		return '';
 	}
 
+	/** 選取標註：設定 selectedId 並觸發 chart 跳轉。編輯中的項目不可重複選取。 */
 	function handleSelect(ann: Annotation) {
 		if (editingId === ann.id) return;
 		selectedId.set(ann.id);
 		onjumpto?.(ann);
 	}
 
+	/** 刪除標註，stopPropagation 避免觸發父層的 select 行為 */
 	function handleDelete(e: MouseEvent, id: string) {
 		e.stopPropagation();
 		if (editingId === id) editingId = null;
 		removeAnnotation(id);
 	}
 
+	/** 進入編輯模式：載入目標標註的現有屬性到編輯表單 */
 	function startEdit(e: MouseEvent, ann: Annotation) {
 		e.stopPropagation();
 		editingId = ann.id;
@@ -75,6 +106,7 @@
 		selectedId.set(ann.id);
 	}
 
+	/** 儲存編輯：將暫存值寫回 store 並退出編輯模式 */
 	function saveEdit() {
 		if (!editingId || !editLabel.trim()) return;
 		updateAnnotation(editingId, {
@@ -86,10 +118,12 @@
 		editingId = null;
 	}
 
+	/** 取消編輯，不儲存變更 */
 	function cancelEdit() {
 		editingId = null;
 	}
 
+	/** 將 Annotation 類型格式化為顯示文字（含時間資訊） */
 	function formatType(ann: Annotation): string {
 		if (ann.annotation_type.type === 'Point') {
 			return `Point (${formatTime(ann.annotation_type.time)})`;

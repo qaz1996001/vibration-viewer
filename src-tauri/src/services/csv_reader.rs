@@ -1,13 +1,26 @@
+//! CSV 读取与解析服务。
+//!
+//! 提供两阶段的 CSV 加载流程:
+//! 1. **Preview** — 只读取前 N 行用于列检测，大文件也能瞬间响应
+//! 2. **Load** — 根据用户指定的 [`ColumnMapping`] 读取完整数据，
+//!    将时间列统一转换为 epoch seconds (Float64)，数据列转为 Float64
+//!
+//! 同时支持多文件拼接 ([`concat_csvs`])，用于 AIDPS 场景下
+//! 将同一设备的多个 CSV 合并为连续时间序列。
+
 use polars::prelude::*;
 use std::path::Path;
 
 use crate::error::AppError;
 use crate::models::vibration::{ColumnMapping, CsvPreview};
 
-/// Maximum rows to read for column preview (keeps preview instant for large files).
+/// Preview 模式下最大读取行数。
+/// 限制行数可确保即使打开 GB 级别的文件也能毫秒级响应。
 const PREVIEW_ROW_LIMIT: usize = 100;
 
-/// Helper: write string content to a temp CSV file and return the path as String.
+/// 测试辅助: 将字符串内容写入临时 CSV 文件，返回 `(文件句柄, 路径字符串)`。
+///
+/// 返回 `NamedTempFile` 句柄以确保临时文件在测试期间不被系统回收。
 #[cfg(test)]
 fn write_temp_csv(content: &str) -> (tempfile::NamedTempFile, String) {
     use std::io::Write;
@@ -18,9 +31,17 @@ fn write_temp_csv(content: &str) -> (tempfile::NamedTempFile, String) {
     (tmp, path)
 }
 
-/// Preview CSV file: read only the first N rows for column detection.
-/// Uses `with_n_rows` to avoid loading the entire file into memory,
-/// making preview instant even for multi-GB files.
+/// 预览 CSV 文件: 仅读取前 [`PREVIEW_ROW_LIMIT`] 行进行列检测。
+///
+/// 采用 `with_n_rows` 限制读取量，避免将整个文件加载到内存中；
+/// 总行数通过 Polars lazy scan 流式统计（不物化全部数据）。
+///
+/// # Returns
+/// [`CsvPreview`] 包含文件路径、列名列表、总行数。
+///
+/// # Errors
+/// - 文件不存在时返回 `AppError::Io`
+/// - CSV 解析失败时返回 `AppError::Polars`
 pub fn preview_csv(file_path: &str) -> Result<CsvPreview, AppError> {
     let path = Path::new(file_path);
     if !path.exists() {
@@ -61,11 +82,13 @@ pub fn preview_csv(file_path: &str) -> Result<CsvPreview, AppError> {
     })
 }
 
-/// Convert a time column expression to Float64 epoch seconds based on its dtype.
+/// 将时间列表达式转换为 Float64 epoch seconds，根据列的原始 dtype 选择策略:
 ///
-/// - `String`: parse as datetime ("%Y-%m-%d %H:%M:%S"), cast to ms, divide by 1000
-/// - `Datetime(_, _)`: cast to ms, divide by 1000
-/// - Numeric/other: cast directly to Float64 (assumed already epoch seconds)
+/// - **`String`** — 按 `"%Y-%m-%d %H:%M:%S"` 格式解析为 datetime，再转为毫秒后除以 1000
+/// - **`Datetime(_, _)`** — 直接 cast 为毫秒后除以 1000
+/// - **其他数值类型** — 直接 cast 为 Float64（假设已经是 epoch seconds）
+///
+/// 输出列统一别名为 `"time"`，后续处理仅依赖此列名。
 fn convert_time_column(time_col: &str, dtype: &DataType) -> Expr {
     match dtype {
         DataType::String => (col(time_col)
@@ -89,9 +112,19 @@ fn convert_time_column(time_col: &str, dtype: &DataType) -> Expr {
     }
 }
 
-/// Read CSV with user-specified column mapping.
-/// Parses the time column (string datetime / datetime / numeric) to epoch seconds.
-/// Casts all data columns to Float64, preserving nulls (no fill_null).
+/// 按用户指定的 [`ColumnMapping`] 读取 CSV 文件并返回 DataFrame。
+///
+/// 处理流程:
+/// 1. 验证 `time_column` 和所有 `data_columns` 在 CSV 中存在
+/// 2. 将时间列统一转换为 Float64 epoch seconds (见 [`convert_time_column`])
+/// 3. 数据列 cast 为 Float64，null 值保持不变（不填充 0.0 以避免静默错误）
+/// 4. 过滤掉时间列为 null 的行（无法解析的 datetime 字符串）
+/// 5. 只保留 `time` + `data_columns`，丢弃未映射的列
+///
+/// # Errors
+/// - 文件不存在: `AppError::Io`
+/// - 列不存在: `AppError::ColumnNotFound`
+/// - CSV 解析 / Polars 操作失败: `AppError::Polars`
 pub fn read_csv_with_mapping(
     file_path: &str,
     mapping: &ColumnMapping,
@@ -150,22 +183,29 @@ pub fn read_csv_with_mapping(
     Ok(lazy.collect()?)
 }
 
-/// Read multiple CSV files and concatenate into a single DataFrame.
-/// Used for AIDPS: merge all CSVs for one device into continuous timeseries.
+/// 读取多个 CSV 文件并拼接为单一 DataFrame（AIDPS 多文件合并场景）。
 ///
-/// Steps:
-/// 1. Read each CSV using existing `read_csv_with_mapping` logic
-/// 2. Vertical concat all DataFrames (polars `concat`)
-/// 3. Sort by time column ascending
-/// 4. Remove duplicate time entries (keep first)
+/// 将同一设备按时间顺序拆分的多个 CSV 合并为连续时间序列:
+/// 1. 逐文件调用 [`read_csv_with_mapping`] 读取
+/// 2. 纵向拼接所有 DataFrame (`polars::concat`)
+/// 3. 按时间列去重（保留首次出现的值，即 `paths` 中靠前文件的数据优先）
+/// 4. 按时间升序排序
 ///
-/// Returns `(merged_dataframe, time_min, time_max)`.
+/// # Returns
+/// `(merged_dataframe, time_min, time_max)` — 合并后的数据与时间范围。
+///
+/// # Errors
+/// - `paths` 为空: `AppError::Csv`
+/// - 任意文件读取失败: 传播 [`read_csv_with_mapping`] 的错误
+/// - 合并后全部行被过滤掉: `AppError::Csv`
 pub fn concat_csvs(
     paths: &[String],
     mapping: &ColumnMapping,
 ) -> Result<(DataFrame, f64, f64), AppError> {
     if paths.is_empty() {
-        return Err(AppError::Csv("No file paths provided for concatenation".into()));
+        return Err(AppError::Csv(
+            "No file paths provided for concatenation".into(),
+        ));
     }
 
     let frames: Vec<DataFrame> = paths
@@ -176,14 +216,14 @@ pub fn concat_csvs(
     // Vertical concat all DataFrames (consume `frames` to avoid cloning)
     let lazy_frames: Vec<LazyFrame> = frames.into_iter().map(IntoLazy::lazy).collect();
     let combined = polars::lazy::dsl::concat(lazy_frames, UnionArgs::default())?
-    // Remove duplicate time entries (keep first occurrence in concat order)
-    .unique(Some(vec!["time".into()]), UniqueKeepStrategy::First)
-    // Sort by time ascending
-    .sort(
-        ["time"],
-        SortMultipleOptions::new().with_order_descending(false),
-    )
-    .collect()?;
+        // Remove duplicate time entries (keep first occurrence in concat order)
+        .unique(Some(vec!["time".into()]), UniqueKeepStrategy::First)
+        // Sort by time ascending
+        .sort(
+            ["time"],
+            SortMultipleOptions::new().with_order_descending(false),
+        )
+        .collect()?;
 
     if combined.height() == 0 {
         return Err(AppError::Csv(

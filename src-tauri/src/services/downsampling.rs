@@ -1,5 +1,20 @@
-/// LTTB (Largest-Triangle-Three-Buckets) downsampling.
-/// Reduces N points to `threshold` points while preserving visual features.
+//! LTTB (Largest-Triangle-Three-Buckets) 降采样算法。
+//!
+//! 将 N 个时间序列数据点缩减为 `threshold` 个点，同时保留视觉上显著的特征
+//! （极值、拐点等）。相比简单的等间距采样或平均值采样，LTTB 能更好地保持
+//! 原始波形的视觉特征。
+//!
+//! 核心思想: 将数据分为 `threshold - 2` 个等宽 bucket，在每个 bucket 中选择
+//! 使得三角形面积最大的点（三角形顶点为: 上一个选中点、候选点、下一个 bucket 均值）。
+//!
+//! 本模块提供基于 **索引** 的接口 ([`lttb_indices`])，返回选中点的原始索引，
+//! 而非复制数据。这样可以用同一组索引对所有 channel 进行对齐降采样。
+//!
+//! 参考: Sveinn Steinarsson, "Downsampling Time Series for Visual Representation" (2013)
+
+/// LTTB 降采样，返回采样后的 `(time, values)` 向量。
+///
+/// 仅在测试中使用，生产代码应使用 [`lttb_indices`] 获取索引后自行取值。
 #[cfg(test)]
 pub fn lttb(time: &[f64], values: &[f64], threshold: usize) -> (Vec<f64>, Vec<f64>) {
     let indices = lttb_indices(time, values, threshold);
@@ -8,15 +23,22 @@ pub fn lttb(time: &[f64], values: &[f64], threshold: usize) -> (Vec<f64>, Vec<f6
     (sampled_time, sampled_values)
 }
 
-/// NOTE: This function uses a single representative channel for index selection.
-/// The selected indices are then applied to ALL channels. This means a spike in
-/// channel Z that doesn't appear in the representative channel may be missed in
-/// the downsampled output. This is an intentional tradeoff for simplicity —
-/// multi-channel LTTB (union of per-channel indices) can be added if users
-/// report missing peaks in specific channels.
+/// LTTB 降采样，返回选中点的原始索引而非数据值。
 ///
-/// LTTB that returns selected indices instead of values.
-/// Use one representative channel for index selection, then apply indices to all channels.
+/// 使用单个代表 channel (`values`) 计算索引，然后将相同索引应用于所有 channel。
+/// 这确保了多 channel 时间对齐，但某个 channel 独有的极值可能被遗漏。
+///
+/// # Parameters
+/// - `time`: 时间戳数组（必须单调递增）
+/// - `values`: 代表 channel 的数据值数组（与 `time` 等长）
+/// - `threshold`: 目标点数。若 `threshold >= n` 或 `threshold < 3`，直接返回全部索引。
+///
+/// # Returns
+/// 严格递增的索引向量，长度为 `min(threshold, n)`。始终包含首尾点。
+///
+/// # 已知限制
+/// 仅基于单 channel 选择索引。若需多 channel 感知的降采样（取各 channel
+/// 索引的并集），可在此基础上扩展。目前作为简单性与正确性的权衡。
 pub fn lttb_indices(time: &[f64], values: &[f64], threshold: usize) -> Vec<usize> {
     let n = time.len();
 
@@ -184,7 +206,10 @@ mod tests {
         let values: Vec<f64> = time.iter().map(|t| (t * 0.01).sin()).collect();
         let indices = lttb_indices(&time, &values, 100);
         for i in 1..indices.len() {
-            assert!(indices[i] > indices[i - 1], "Indices must be strictly increasing");
+            assert!(
+                indices[i] > indices[i - 1],
+                "Indices must be strictly increasing"
+            );
         }
     }
 

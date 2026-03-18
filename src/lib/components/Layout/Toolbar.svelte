@@ -1,27 +1,51 @@
 <script lang="ts">
-	import { mode } from '$lib/stores/modeStore';
-	import type { AppMode } from '$lib/stores/modeStore';
-	import { precision, PRECISION_OPTIONS } from '$lib/stores/viewStore';
-	import type { PrecisionLevel } from '$lib/stores/viewStore';
-	import { mergeSeriesMode } from '$lib/stores/uiStore';
+	/**
+	 * Toolbar - 頂部工具列
+	 *
+	 * 包含以下功能區塊：
+	 * - 檔案操作：開檔、儲存標註、關閉
+	 * - 專案操作：開啟/儲存/載入 .vibproj 專案
+	 * - 操作模式切換：browse / annotate_point / annotate_range
+	 * - 精度控制：LTTB downsampling 的點數上限
+	 * - 通道合併：多檔案時，同名 channel 合併/分離顯示
+	 * - 匯出：匯出視野範圍或全部資料
+	 */
+	import { mode, precision, PRECISION_OPTIONS, mergeSeriesMode } from '$lib/stores/uiStore';
+	import type { AppMode, PrecisionLevel } from '$lib/stores/uiStore';
 
 	interface Props {
+		/** 標註是否有未儲存的變更 */
 		hasUnsaved?: boolean;
+		/** 是否有已開啟的專案 */
 		hasProject?: boolean;
+		/** 是否載入了多個檔案（控制合併通道按鈕顯示） */
 		multiFile?: boolean;
+		/** 開啟單一 CSV 檔案 */
 		onopenfile?: () => void;
+		/** 開啟 AIDPS 資料夾 */
+		onopenproject?: () => void;
+		/** 儲存 .vibproj 專案檔 */
+		onsaveproject?: () => void;
+		/** 載入 .vibproj 專案檔 */
+		onloadproject?: () => void;
+		/** 儲存標註到 .vibann.json */
 		onsave?: () => void;
+		/** 匯出全部資料 */
 		onexport?: () => void;
+		/** 匯出目前視窗範圍的資料 */
 		onexportviewport?: () => void;
+		/** 關閉目前專案/檔案 */
 		onclose?: () => void;
 	}
 
-	let { hasUnsaved = false, hasProject = false, multiFile = false, onopenfile, onsave, onexport, onexportviewport, onclose }: Props = $props();
+	let { hasUnsaved = false, hasProject = false, multiFile = false, onopenfile, onopenproject, onsaveproject, onloadproject, onsave, onexport, onexportviewport, onclose }: Props = $props();
 
+	/** 切換操作模式（browse / annotate_point / annotate_range） */
 	function setMode(newMode: AppMode) {
 		mode.set(newMode);
 	}
 
+	/** 處理精度下拉選單變更，更新 precision store */
 	function handlePrecisionChange(e: Event) {
 		const value = (e.target as HTMLSelectElement).value as PrecisionLevel;
 		precision.set(value);
@@ -31,12 +55,18 @@
 <div class="toolbar">
 	<div class="toolbar-group">
 		<button onclick={() => onopenfile?.()}>Open File</button>
+		<button onclick={() => onopenproject?.()}>開啟專案</button>
 		<button onclick={() => onsave?.()} class:unsaved={hasUnsaved}>
 			{hasUnsaved ? 'Save *' : 'Save'}
 		</button>
 		{#if hasProject}
 			<button onclick={() => onclose?.()}>Close</button>
 		{/if}
+	</div>
+
+	<div class="toolbar-group project-group">
+		<button onclick={() => onsaveproject?.()} disabled={!hasProject}>儲存專案</button>
+		<button onclick={() => onloadproject?.()}>載入專案</button>
 	</div>
 
 	<div class="toolbar-group mode-group">
@@ -109,6 +139,11 @@
 		padding: 0 0.75rem;
 	}
 
+	.project-group {
+		border-left: 1px solid var(--border, #e0e0e0);
+		padding: 0 0.75rem;
+	}
+
 	.precision-label {
 		font-size: 0.85rem;
 		font-weight: 500;
@@ -146,5 +181,10 @@
 	button.unsaved {
 		color: var(--warning, #e67e22);
 		font-weight: 600;
+	}
+
+	button:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
 	}
 </style>

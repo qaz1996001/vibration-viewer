@@ -1,4 +1,14 @@
 <script lang="ts">
+	/**
+	 * FileList - 已載入檔案列表（側欄）
+	 *
+	 * 顯示所有已載入的 CSV 檔案，支援：
+	 * - 點擊選取（設定 activeDatasetId，影響 statistics/data table 顯示）
+	 * - 色點按鈕：開啟隱藏的 color picker 更改檔案在 chart 上的系列顏色
+	 * - 刪除按鈕：從 dataStore 移除檔案
+	 *
+	 * 檔案順序由 datasetOrder store 控制（按載入順序）。
+	 */
 	import {
 		datasets,
 		datasetOrder,
@@ -8,15 +18,18 @@
 		setFileColor
 	} from '$lib/stores/dataStore';
 
+	/** 選取檔案為 active dataset（影響 statistics、data table 等單檔案視圖） */
 	function handleSelect(id: string) {
 		activeDatasetId.set(id);
 	}
 
+	/** 移除檔案，stopPropagation 避免觸發父層的 select */
 	function handleRemove(e: MouseEvent, id: string) {
 		e.stopPropagation();
 		removeFile(id);
 	}
 
+	/** 處理 color picker 變更，更新 fileColors store 中該檔案的顏色 */
 	function handleColorChange(id: string, e: Event) {
 		const value = (e.target as HTMLInputElement).value;
 		setFileColor(id, value);
