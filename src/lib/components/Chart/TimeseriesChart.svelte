@@ -18,9 +18,10 @@
 		onannotatepoint?: (data: { time: number; value: number }) => void;
 		onannotaterange?: (data: { startTime: number; endTime: number }) => void;
 		onupdateannotation?: (data: { id: string; updates: Record<string, unknown> }) => void;
+		zoomTo?: { start: number; end: number } | null;
 	}
 
-	let { ondatazoom, onannotatepoint, onannotaterange, onupdateannotation }: Props = $props();
+	let { ondatazoom, onannotatepoint, onannotaterange, onupdateannotation, zoomTo = null }: Props = $props();
 
 	let chartContainer: HTMLDivElement;
 	let chartInstance: echarts.ECharts | null = $state(null);
@@ -136,6 +137,18 @@
 			}
 		);
 		chart.setOption(option, { notMerge: true });
+	});
+
+	// Respond to external zoom commands (e.g., jump-to-annotation)
+	$effect(() => {
+		if (zoomTo && chartInstance) {
+			currentZoom = { start: zoomTo.start, end: zoomTo.end };
+			chartInstance.dispatchAction({
+				type: 'dataZoom',
+				start: zoomTo.start,
+				end: zoomTo.end
+			});
+		}
 	});
 </script>
 

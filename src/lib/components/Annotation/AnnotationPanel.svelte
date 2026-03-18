@@ -13,9 +13,10 @@
 		pendingAnnotation?: PendingAnnotation | null;
 		onconfirm?: (data: { label: string; color: string }) => void;
 		oncancel?: () => void;
+		onjumpto?: (annotation: Annotation) => void;
 	}
 
-	let { pendingAnnotation = null, onconfirm, oncancel }: Props = $props();
+	let { pendingAnnotation = null, onconfirm, oncancel, onjumpto }: Props = $props();
 
 	let label = $state('');
 	let color = $state(DEFAULT_ANNOTATION_COLOR);
@@ -52,9 +53,10 @@
 		return '';
 	}
 
-	function handleSelect(id: string) {
-		if (editingId === id) return;
-		selectedId.set(id);
+	function handleSelect(ann: Annotation) {
+		if (editingId === ann.id) return;
+		selectedId.set(ann.id);
+		onjumpto?.(ann);
 	}
 
 	function handleDelete(e: MouseEvent, id: string) {
@@ -180,8 +182,8 @@
 				class:selected={$selectedId === ann.id}
 				role="button"
 				tabindex="0"
-				onclick={() => handleSelect(ann.id)}
-				onkeydown={(e) => e.key === 'Enter' && handleSelect(ann.id)}
+				onclick={() => handleSelect(ann)}
+				onkeydown={(e) => e.key === 'Enter' && handleSelect(ann)}
 			>
 				<span class="color-dot" style="background: {ann.color}"></span>
 				<div class="annotation-info">

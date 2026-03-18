@@ -36,10 +36,12 @@
 	import { projectOpen } from '$lib/stores/projectStore';
 	import { debounce } from '$lib/utils/debounce';
 	import type { ColumnMapping, CsvPreview } from '$lib/types/vibration';
+	import type { Annotation } from '$lib/types/annotation';
 
 	let pendingAnnotation: { type: 'point' | 'range'; data: any } | null = $state(null);
 	let currentZoomStart = $state(0);
 	let currentZoomEnd = $state(100);
+	let chartZoomTarget: { start: number; end: number } | null = $state(null);
 	let showMappingDialog = $state(false);
 	let currentPreview: CsvPreview | null = $state(null);
 	let pendingFilePaths: string[] = $state([]);
@@ -221,6 +223,47 @@
 		rangeFirstClick.set(null);
 	}
 
+	function handleJumpToAnnotation(ann: Annotation) {
+		const range = $globalTimeRange;
+		if (!range) return;
+
+		const totalSpan = range[1] - range[0];
+		let targetStart: number;
+		let targetEnd: number;
+
+		if (ann.annotation_type.type === 'Point') {
+			const padding = totalSpan * 0.05;
+			targetStart = ann.annotation_type.time - padding;
+			targetEnd = ann.annotation_type.time + padding;
+		} else {
+			const rangeSpan = ann.annotation_type.end_time - ann.annotation_type.start_time;
+			const padding = rangeSpan * 0.1;
+			targetStart = ann.annotation_type.start_time - padding;
+			targetEnd = ann.annotation_type.end_time + padding;
+		}
+
+		// Clamp to global range
+		targetStart = Math.max(range[0], targetStart);
+		targetEnd = Math.min(range[1], targetEnd);
+
+		// Convert to percentage for dataZoom
+		const zoomStart = ((targetStart - range[0]) / totalSpan) * 100;
+		const zoomEnd = ((targetEnd - range[0]) / totalSpan) * 100;
+
+		// Drive chart zoom via reactive prop
+		chartZoomTarget = { start: zoomStart, end: zoomEnd };
+
+		// Fetch data for the new viewport
+		currentZoomStart = zoomStart;
+		currentZoomEnd = zoomEnd;
+		const startTime = range[0] + (zoomStart / 100) * totalSpan;
+		const endTime = range[0] + (zoomEnd / 100) * totalSpan;
+		const maxPts = getMaxPoints($precision);
+		fetchAllChunks(startTime, endTime, maxPts > 0 ? maxPts : Number.MAX_SAFE_INTEGER).catch(
+			(e) => console.error('Failed to fetch chunks on jump:', e)
+		);
+	}
+
 	function handleUpdateAnnotation(data: { id: string; updates: Record<string, any> }) {
 		updateAnnotation(data.id, data.updates);
 	}
@@ -266,6 +309,7 @@
 						onannotatepoint={handleAnnotatePoint}
 						onannotaterange={handleAnnotateRange}
 						onupdateannotation={handleUpdateAnnotation}
+						zoomTo={chartZoomTarget}
 					/>
 				</section>
 
@@ -310,6 +354,7 @@
 				{pendingAnnotation}
 				onconfirm={handleAnnotationConfirm}
 				oncancel={handleAnnotationCancel}
+				onjumpto={handleJumpToAnnotation}
 			/>
 		</aside>
 	</div>
