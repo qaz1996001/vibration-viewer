@@ -150,6 +150,54 @@ pub fn read_csv_with_mapping(
     Ok(lazy.collect()?)
 }
 
+/// Read multiple CSV files and concatenate into a single DataFrame.
+/// Used for AIDPS: merge all CSVs for one device into continuous timeseries.
+///
+/// Steps:
+/// 1. Read each CSV using existing `read_csv_with_mapping` logic
+/// 2. Vertical concat all DataFrames (polars `concat`)
+/// 3. Sort by time column ascending
+/// 4. Remove duplicate time entries (keep first)
+///
+/// Returns `(merged_dataframe, time_min, time_max)`.
+pub fn concat_csvs(
+    paths: &[String],
+    mapping: &ColumnMapping,
+) -> Result<(DataFrame, f64, f64), AppError> {
+    if paths.is_empty() {
+        return Err(AppError::Csv("No file paths provided for concatenation".into()));
+    }
+
+    let frames: Vec<DataFrame> = paths
+        .iter()
+        .map(|p| read_csv_with_mapping(p, mapping))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Vertical concat all DataFrames (consume `frames` to avoid cloning)
+    let lazy_frames: Vec<LazyFrame> = frames.into_iter().map(IntoLazy::lazy).collect();
+    let combined = polars::lazy::dsl::concat(lazy_frames, UnionArgs::default())?
+    // Remove duplicate time entries (keep first occurrence in concat order)
+    .unique(Some(vec!["time".into()]), UniqueKeepStrategy::First)
+    // Sort by time ascending
+    .sort(
+        ["time"],
+        SortMultipleOptions::new().with_order_descending(false),
+    )
+    .collect()?;
+
+    if combined.height() == 0 {
+        return Err(AppError::Csv(
+            "All rows were filtered out during concatenation".into(),
+        ));
+    }
+
+    let time_col = combined.column("time")?.f64()?;
+    let time_min = time_col.min().unwrap_or(0.0);
+    let time_max = time_col.max().unwrap_or(0.0);
+
+    Ok((combined, time_min, time_max))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,5 +384,156 @@ mod tests {
         assert!(col_names.contains(&"d".to_string()));
         assert!(!col_names.contains(&"a".to_string()));
         assert!(!col_names.contains(&"c".to_string()));
+    }
+
+    // ─── concat_csvs tests ───
+
+    #[test]
+    fn test_concat_single_file() {
+        let csv = "time,x,y\n2024-01-01 00:00:00,1.0,2.0\n2024-01-01 00:00:01,3.0,4.0\n";
+        let (_tmp, path) = write_temp_csv(csv);
+        let mapping = ColumnMapping {
+            time_column: "time".into(),
+            data_columns: vec!["x".into(), "y".into()],
+        };
+        let (df, time_min, time_max) = concat_csvs(&[path], &mapping).unwrap();
+        assert_eq!(df.height(), 2);
+        assert_eq!(df.width(), 3); // time, x, y
+        assert!(time_min < time_max);
+        assert!((time_max - time_min - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_concat_multiple_files() {
+        // File 1: earlier times
+        let csv1 = "time,x,y\n2024-01-01 00:00:00,1.0,2.0\n2024-01-01 00:00:01,3.0,4.0\n";
+        let (_tmp1, path1) = write_temp_csv(csv1);
+
+        // File 2: later times
+        let csv2 = "time,x,y\n2024-01-01 00:00:02,5.0,6.0\n2024-01-01 00:00:03,7.0,8.0\n";
+        let (_tmp2, path2) = write_temp_csv(csv2);
+
+        let mapping = ColumnMapping {
+            time_column: "time".into(),
+            data_columns: vec!["x".into(), "y".into()],
+        };
+        let (df, time_min, time_max) = concat_csvs(&[path1, path2], &mapping).unwrap();
+        assert_eq!(df.height(), 4);
+
+        // Verify sorted by time
+        let time = df.column("time").unwrap().f64().unwrap();
+        for i in 1..df.height() {
+            assert!(time.get(i).unwrap() >= time.get(i - 1).unwrap());
+        }
+
+        // Time range should span 3 seconds
+        assert!((time_max - time_min - 3.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_concat_removes_duplicate_times() {
+        // Both files share the timestamp 00:00:01
+        let csv1 = "time,x\n2024-01-01 00:00:00,1.0\n2024-01-01 00:00:01,2.0\n";
+        let (_tmp1, path1) = write_temp_csv(csv1);
+
+        let csv2 = "time,x\n2024-01-01 00:00:01,99.0\n2024-01-01 00:00:02,3.0\n";
+        let (_tmp2, path2) = write_temp_csv(csv2);
+
+        let mapping = ColumnMapping {
+            time_column: "time".into(),
+            data_columns: vec!["x".into()],
+        };
+        let (df, _, _) = concat_csvs(&[path1, path2], &mapping).unwrap();
+        // 4 rows minus 1 duplicate = 3
+        assert_eq!(df.height(), 3);
+
+        // Verify time column has no duplicates
+        let time = df.column("time").unwrap().f64().unwrap();
+        let mut times: Vec<f64> = time.into_iter().flatten().collect();
+        let orig_len = times.len();
+        times.dedup();
+        assert_eq!(times.len(), orig_len);
+
+        // Verify "keep first" keeps file1's value (2.0), not file2's (99.0)
+        let x = df.column("x").unwrap().f64().unwrap();
+        // The middle row (index 1) corresponds to the duplicated timestamp
+        // The value should be 2.0 from file1, not 99.0 from file2
+        assert!((x.get(1).unwrap() - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_concat_preserves_all_channels() {
+        let csv1 = "time,a,b,c\n2024-01-01 00:00:00,1.0,2.0,3.0\n";
+        let (_tmp1, path1) = write_temp_csv(csv1);
+
+        let csv2 = "time,a,b,c\n2024-01-01 00:00:01,4.0,5.0,6.0\n";
+        let (_tmp2, path2) = write_temp_csv(csv2);
+
+        let mapping = ColumnMapping {
+            time_column: "time".into(),
+            data_columns: vec!["a".into(), "b".into(), "c".into()],
+        };
+        let (df, _, _) = concat_csvs(&[path1, path2], &mapping).unwrap();
+        assert_eq!(df.width(), 4); // time + a + b + c
+        assert_eq!(df.height(), 2);
+
+        let col_names: Vec<String> = df
+            .get_column_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(col_names.contains(&"time".to_string()));
+        assert!(col_names.contains(&"a".to_string()));
+        assert!(col_names.contains(&"b".to_string()));
+        assert!(col_names.contains(&"c".to_string()));
+
+        // Check values
+        let a = df.column("a").unwrap().f64().unwrap();
+        assert!((a.get(0).unwrap() - 1.0).abs() < 1e-6);
+        assert!((a.get(1).unwrap() - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_concat_empty_paths_error() {
+        let mapping = ColumnMapping {
+            time_column: "time".into(),
+            data_columns: vec!["x".into()],
+        };
+        let result = concat_csvs(&[], &mapping);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("No file paths"));
+    }
+
+    #[test]
+    fn test_concat_mismatched_schemas_error() {
+        // File1 has columns time,x,y — File2 has columns time,x,z (no "y")
+        let csv1 = "time,x,y\n1.0,1.0,2.0\n";
+        let (_tmp1, path1) = write_temp_csv(csv1);
+
+        let csv2 = "time,x,z\n2.0,3.0,4.0\n";
+        let (_tmp2, path2) = write_temp_csv(csv2);
+
+        // Mapping requests "y" which exists in file1 but not file2
+        let mapping = ColumnMapping {
+            time_column: "time".into(),
+            data_columns: vec!["x".into(), "y".into()],
+        };
+        let result = concat_csvs(&[path1, path2], &mapping);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_concat_all_null_times_error() {
+        // CSV with unparseable time values — all rows should be filtered out
+        let csv = "time,x\nnot_a_date,1.0\nalso_bad,2.0\n";
+        let (_tmp, path) = write_temp_csv(csv);
+
+        let mapping = ColumnMapping {
+            time_column: "time".into(),
+            data_columns: vec!["x".into()],
+        };
+        let result = concat_csvs(&[path], &mapping);
+        assert!(result.is_err());
     }
 }

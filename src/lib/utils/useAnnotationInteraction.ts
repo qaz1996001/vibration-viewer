@@ -164,7 +164,9 @@ export function setupAnnotationBrushHandler(
 		const anns = get(annotations);
 		const ann = anns.find((a) => a.id === selId);
 		if (!ann || ann.annotation_type.type !== 'Range') {
-			container.style.cursor = '';
+			// Don't reset cursor — label drag handler manages Point annotations.
+			// This works because ZRender fires listeners in registration order:
+			// brush handler registers first, then label handler handles cursor for Points.
 			return;
 		}
 
@@ -191,5 +193,125 @@ export function setupAnnotationBrushHandler(
 
 	return {
 		isDragging: () => draggingBoundary !== null
+	};
+}
+
+/**
+ * Set up drag handlers on the chart's ZRender layer for repositioning
+ * Point annotation labels by dragging.
+ *
+ * In browse mode with a selected Point annotation, mousedown near the pin
+ * starts a drag. mousemove updates label_offset_x/y in real-time.
+ * mouseup ends the drag and persists the final offset.
+ */
+export function setupLabelDragHandler(
+	chart: echarts.ECharts,
+	container: HTMLElement,
+	onUpdate: UpdateAnnotationCallback
+): { isDragging: () => boolean } {
+	let dragging = false;
+	let dragAnnotationId: string | null = null;
+	let dragStartX = 0;
+	let dragStartY = 0;
+	let initialOffsetX = 0;
+	let initialOffsetY = 0;
+	let lastUpdateTime = 0;
+
+	/** Check if mouse position is near a selected Point annotation's pin. */
+	function hitTestPin(offsetX: number, offsetY: number): boolean {
+		const selId = get(selectedId);
+		if (!selId) return false;
+		const anns = get(annotations);
+		const ann = anns.find((a) => a.id === selId);
+		if (!ann || ann.annotation_type.type !== 'Point') return false;
+
+		const pt = ann.annotation_type;
+		const pinPixel = chart.convertToPixel('grid', [pt.time, pt.value]);
+		if (!pinPixel) return false;
+
+		const dx = Math.abs(offsetX - pinPixel[0]);
+		const dy = offsetY - pinPixel[1]; // negative = above pin tip
+		// Accept clicks within 25px horizontally, from 50px above to 10px below pin tip
+		return dx <= 25 && dy <= 10 && dy >= -50;
+	}
+
+	chart.getZr().on('mousedown', (params: ZrEventParams) => {
+		if (get(mode) !== 'browse') return;
+		const selId = get(selectedId);
+		if (!selId) return;
+
+		const anns = get(annotations);
+		const ann = anns.find((a) => a.id === selId);
+		if (!ann || ann.annotation_type.type !== 'Point') return;
+
+		// hitTestPin re-reads stores (minor redundancy for code clarity)
+		if (!hitTestPin(params.offsetX, params.offsetY)) return;
+
+		dragging = true;
+		dragAnnotationId = ann.id;
+		dragStartX = params.offsetX;
+		dragStartY = params.offsetY;
+		initialOffsetX = ann.label_offset_x;
+		initialOffsetY = ann.label_offset_y;
+		lastUpdateTime = 0;
+		container.style.cursor = 'grabbing';
+	});
+
+	chart.getZr().on('mousemove', (params: ZrEventParams) => {
+		if (!dragging || !dragAnnotationId) {
+			// Cursor feedback: show grab when hovering near a selected Point annotation's pin
+			if (get(mode) !== 'browse') return;
+			if (!get(selectedId)) return;
+			if (hitTestPin(params.offsetX, params.offsetY)) {
+				container.style.cursor = 'grab';
+			} else {
+				// Only reset if a Point annotation is selected (we own cursor management)
+				const anns = get(annotations);
+				const ann = anns.find((a) => a.id === get(selectedId));
+				if (ann && ann.annotation_type.type === 'Point') {
+					container.style.cursor = '';
+				}
+			}
+			return;
+		}
+
+		// Throttle updates to ~60fps during drag
+		const now = Date.now();
+		if (now - lastUpdateTime < 16) return;
+		lastUpdateTime = now;
+
+		const deltaX = params.offsetX - dragStartX;
+		const deltaY = params.offsetY - dragStartY;
+
+		onUpdate({
+			id: dragAnnotationId,
+			updates: {
+				label_offset_x: Math.round(initialOffsetX + deltaX),
+				label_offset_y: Math.round(initialOffsetY + deltaY)
+			}
+		});
+
+		container.style.cursor = 'grabbing';
+	});
+
+	chart.getZr().on('mouseup', (params: ZrEventParams) => {
+		if (dragging && dragAnnotationId) {
+			const deltaX = params.offsetX - dragStartX;
+			const deltaY = params.offsetY - dragStartY;
+			onUpdate({
+				id: dragAnnotationId,
+				updates: {
+					label_offset_x: Math.round(initialOffsetX + deltaX),
+					label_offset_y: Math.round(initialOffsetY + deltaY)
+				}
+			});
+			container.style.cursor = '';
+			dragging = false;
+			dragAnnotationId = null;
+		}
+	});
+
+	return {
+		isDragging: () => dragging
 	};
 }

@@ -128,6 +128,60 @@ pub fn get_timeseries_chunk(
     }
 }
 
+/// Load all CSV files for a device (AIDPS multi-file merge).
+/// Concatenates multiple CSVs into a single continuous timeseries,
+/// sorted by time with duplicate timestamps removed.
+///
+/// Note: Uses `device_id` as the dataset key. Calling with the same
+/// `device_id` will replace the previous entry (idempotent reload).
+#[tauri::command]
+pub fn load_device_data(
+    device_id: String,
+    file_paths: Vec<String>,
+    column_mapping: ColumnMapping,
+    state: State<AppState>,
+) -> Result<VibrationDataset, AppError> {
+    // Perform file I/O outside of lock scope
+    let (df, time_min, time_max) = csv_reader::concat_csvs(&file_paths, &column_mapping)?;
+
+    let total_points = df.height();
+
+    let file_name = format!("{} ({} files)", device_id, file_paths.len());
+
+    let metadata = VibrationDataset {
+        id: device_id.clone(),
+        // TODO: file_path stores only first file; multi-file provenance not yet tracked
+        file_path: file_paths.first().cloned().unwrap_or_default(),
+        file_name,
+        total_points,
+        time_range: (time_min, time_max),
+        column_mapping,
+    };
+
+    // Acquire write lock only for the insert
+    let mut datasets = state.datasets.write().map_err(|_| AppError::LockPoisoned)?;
+    datasets.insert(
+        device_id,
+        DatasetEntry {
+            metadata: metadata.clone(),
+            dataframe: df,
+        },
+    );
+    drop(datasets);
+
+    // Update project context for AIDPS multi-file mode
+    {
+        let mut project_ctx = state.project.write().map_err(|_| AppError::LockPoisoned)?;
+        if project_ctx.metadata.created_at.is_empty() {
+            project_ctx.metadata.name = metadata.file_name.clone();
+            project_ctx.metadata.created_at = "auto".into();
+        }
+        project_ctx.project_type = crate::models::project::ProjectType::AidpsFolder;
+    }
+
+    Ok(metadata)
+}
+
 fn extract_f64_vec(df: &DataFrame, col_name: &str) -> Result<Vec<f64>, AppError> {
     Ok(df
         .column(col_name)?

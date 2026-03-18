@@ -10,7 +10,8 @@
 	import { createChartInstance, disposeChart, setupResizeObserver } from '$lib/utils/useChart';
 	import {
 		setupAnnotationClickHandler,
-		setupAnnotationBrushHandler
+		setupAnnotationBrushHandler,
+		setupLabelDragHandler
 	} from '$lib/utils/useAnnotationInteraction';
 
 	interface Props {
@@ -70,14 +71,19 @@
 		);
 	}
 
-	/** 4. Set up brush/drag handlers for range-annotation boundary resizing. */
+	/** 4. Set up drag handlers for annotation interaction (range boundaries + point label repositioning). */
 	function setupBrushHandler(chart: echarts.ECharts): void {
-		const handle = setupAnnotationBrushHandler(
+		const brushHandle = setupAnnotationBrushHandler(
 			chart,
 			chartContainer,
 			(data) => onupdateannotation?.(data)
 		);
-		isDragging = handle.isDragging;
+		const labelHandle = setupLabelDragHandler(
+			chart,
+			chartContainer,
+			(data) => onupdateannotation?.(data)
+		);
+		isDragging = () => brushHandle.isDragging() || labelHandle.isDragging();
 	}
 
 	/** 5. Observe container resize and auto-resize the chart. Returns cleanup fn. */

@@ -24,6 +24,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::data::preview_csv_columns,
             commands::data::load_vibration_data,
+            commands::data::load_device_data,
             commands::data::get_timeseries_chunk,
             commands::statistics::compute_statistics,
             commands::annotation::save_annotations,
