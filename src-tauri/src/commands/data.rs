@@ -42,7 +42,7 @@ pub fn load_vibration_data(
         column_mapping,
     };
 
-    let mut datasets = state.datasets.write().unwrap_or_else(|p| p.into_inner());
+    let mut datasets = state.datasets.write().map_err(|_| AppError::LockPoisoned)?;
     datasets.insert(
         id,
         DatasetEntry {
@@ -62,7 +62,7 @@ pub fn get_timeseries_chunk(
     max_points: usize,
     state: State<AppState>,
 ) -> Result<TimeseriesChunk, AppError> {
-    let datasets = state.datasets.read().unwrap_or_else(|p| p.into_inner());
+    let datasets = state.datasets.read().map_err(|_| AppError::LockPoisoned)?;
     let entry = datasets
         .get(&dataset_id)
         .ok_or_else(|| AppError::DatasetNotFound(dataset_id.clone()))?;

@@ -14,7 +14,7 @@ pub fn export_data(
 ) -> Result<String, AppError> {
     // Acquire lock, extract data, release lock before I/O
     let mut export_df = {
-        let datasets = state.datasets.read().unwrap_or_else(|p| p.into_inner());
+        let datasets = state.datasets.read().map_err(|_| AppError::LockPoisoned)?;
         let entry = datasets
             .get(&dataset_id)
             .ok_or_else(|| AppError::DatasetNotFound(dataset_id.clone()))?;

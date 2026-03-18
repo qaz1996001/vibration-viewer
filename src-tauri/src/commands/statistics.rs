@@ -10,7 +10,7 @@ pub fn compute_statistics(
     dataset_id: String,
     state: State<AppState>,
 ) -> Result<StatisticsReport, AppError> {
-    let datasets = state.datasets.read().unwrap_or_else(|p| p.into_inner());
+    let datasets = state.datasets.read().map_err(|_| AppError::LockPoisoned)?;
     let entry = datasets
         .get(&dataset_id)
         .ok_or_else(|| AppError::DatasetNotFound(dataset_id.clone()))?;
@@ -24,9 +24,9 @@ pub fn compute_statistics(
     for col_name in data_columns {
         let col = df.column(col_name)?;
         let series = col.as_materialized_series();
-        basic.push(stats_engine::compute_basic_stats(series, col_name));
-        distribution.push(stats_engine::compute_distribution_stats(series, col_name));
-        shape.push(stats_engine::compute_shape_stats(series, col_name));
+        basic.push(stats_engine::compute_basic_stats(series, col_name)?);
+        distribution.push(stats_engine::compute_distribution_stats(series, col_name)?);
+        shape.push(stats_engine::compute_shape_stats(series, col_name)?);
     }
 
     Ok(StatisticsReport {
