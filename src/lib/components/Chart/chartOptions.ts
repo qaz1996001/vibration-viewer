@@ -4,9 +4,6 @@ import type { Annotation } from '$lib/types/annotation';
 import { formatTime } from '$lib/utils/formatTime';
 import { getChannelColor } from '$lib/constants/colors';
 
-// Re-export for consumers that import from this module
-export { formatTime, getChannelColor };
-
 /**
  * Multi-file overview chart option.
  * Each dataset + channel = one ECharts series.

@@ -43,22 +43,23 @@
 	let pendingFilePaths: string[] = $state([]);
 
 	async function handleOpenFile() {
-		const selected = await open({
-			multiple: true,
-			filters: [{ name: 'CSV', extensions: ['csv'] }]
-		});
-		if (!selected) return;
-
-		const paths = Array.isArray(selected) ? selected : [selected];
-		if (paths.length === 0) return;
-
 		try {
+			const selected = await open({
+				multiple: true,
+				filters: [{ name: 'CSV', extensions: ['csv'] }]
+			});
+			if (!selected) return;
+
+			const paths = Array.isArray(selected) ? selected : [selected];
+			if (paths.length === 0) return;
+
 			// Preview first file for column mapping; same mapping applied to all
 			const preview = await previewFile(paths[0]);
 			currentPreview = preview;
 			pendingFilePaths = paths;
 			showMappingDialog = true;
 		} catch (e) {
+			console.error('Failed to open file:', e);
 			error.set(String(e));
 		}
 	}
@@ -71,7 +72,12 @@
 
 		for (const filePath of paths) {
 			await addFile(filePath, mapping);
-			await loadAnnotations(filePath);
+			try {
+				await loadAnnotations(filePath);
+			} catch (e) {
+				console.error('Failed to load annotations:', e);
+				// Non-fatal: file may have no annotations yet
+			}
 		}
 	}
 
@@ -87,6 +93,7 @@
 			try {
 				await saveAnnotations(ds.file_path);
 			} catch (e) {
+				console.error('Failed to save annotations:', e);
 				error.set(`Save failed: ${e}`);
 			}
 		}
@@ -95,19 +102,20 @@
 	async function handleExport() {
 		const ds = $activeDataset;
 		if (!ds) return;
-		const outputPath = await save({
-			filters: [{ name: 'CSV', extensions: ['csv'] }],
-			defaultPath: 'export.csv'
-		});
-		if (outputPath) {
-			try {
+		try {
+			const outputPath = await save({
+				filters: [{ name: 'CSV', extensions: ['csv'] }],
+				defaultPath: 'export.csv'
+			});
+			if (outputPath) {
 				await invoke('export_data', {
 					datasetId: ds.id,
 					outputPath
 				});
-			} catch (e) {
-				error.set(`Export failed: ${e}`);
 			}
+		} catch (e) {
+			console.error('Failed to export data:', e);
+			error.set(`Export failed: ${e}`);
 		}
 	}
 
@@ -118,21 +126,22 @@
 		if (!range) return;
 		const startTime = range[0] + (currentZoomStart / 100) * (range[1] - range[0]);
 		const endTime = range[0] + (currentZoomEnd / 100) * (range[1] - range[0]);
-		const outputPath = await save({
-			filters: [{ name: 'CSV', extensions: ['csv'] }],
-			defaultPath: 'export_viewport.csv'
-		});
-		if (outputPath) {
-			try {
+		try {
+			const outputPath = await save({
+				filters: [{ name: 'CSV', extensions: ['csv'] }],
+				defaultPath: 'export_viewport.csv'
+			});
+			if (outputPath) {
 				await invoke('export_data', {
 					datasetId: ds.id,
 					outputPath,
 					startTime,
 					endTime
 				});
-			} catch (e) {
-				error.set(`Export failed: ${e}`);
 			}
+		} catch (e) {
+			console.error('Failed to export viewport data:', e);
+			error.set(`Export failed: ${e}`);
 		}
 	}
 
@@ -144,7 +153,9 @@
 		const startTime = range[0] + (start / 100) * (range[1] - range[0]);
 		const endTime = range[0] + (end / 100) * (range[1] - range[0]);
 		const maxPts = getMaxPoints($precision);
-		fetchAllChunks(startTime, endTime, maxPts > 0 ? maxPts : Number.MAX_SAFE_INTEGER);
+		fetchAllChunks(startTime, endTime, maxPts > 0 ? maxPts : Number.MAX_SAFE_INTEGER).catch(
+			(e) => console.error('Failed to fetch chunks on zoom:', e)
+		);
 	}, 300);
 
 	// Re-fetch when precision changes
@@ -156,7 +167,9 @@
 		const startTime = range[0] + (currentZoomStart / 100) * (range[1] - range[0]);
 		const endTime = range[0] + (currentZoomEnd / 100) * (range[1] - range[0]);
 		const maxPts = getMaxPoints(level);
-		fetchAllChunks(startTime, endTime, maxPts > 0 ? maxPts : Number.MAX_SAFE_INTEGER);
+		fetchAllChunks(startTime, endTime, maxPts > 0 ? maxPts : Number.MAX_SAFE_INTEGER).catch(
+			(e) => console.error('Failed to fetch chunks on precision change:', e)
+		);
 	});
 
 	function handleAnnotatePoint(data: { time: number; value: number }) {

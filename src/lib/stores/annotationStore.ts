@@ -1,6 +1,7 @@
 import { writable, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import type { Annotation, AnnotationType } from '$lib/types/annotation';
+import { DEFAULT_ANNOTATION_COLOR } from '$lib/constants/colors';
 
 export const annotations = writable<Annotation[]>([]);
 export const selectedId = writable<string | null>(null);
@@ -9,7 +10,7 @@ export const dirty = writable(false);
 export function addAnnotation(
 	annotationType: AnnotationType,
 	label: string,
-	color: string = '#ff6b6b'
+	color: string = DEFAULT_ANNOTATION_COLOR
 ): void {
 	const newAnnotation: Annotation = {
 		id: crypto.randomUUID(),

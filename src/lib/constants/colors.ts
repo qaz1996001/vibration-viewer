@@ -10,6 +10,17 @@ export const COLOR_PALETTE = [
 	'#ea7ccc'
 ];
 
+export const ANNOTATION_COLORS = [
+	'#ff6b6b',
+	'#4ecdc4',
+	'#45b7d1',
+	'#f9ca24',
+	'#6c5ce7',
+	'#a29bfe'
+];
+
+export const DEFAULT_ANNOTATION_COLOR = '#ff6b6b';
+
 export function getChannelColor(index: number): string {
 	return COLOR_PALETTE[index % COLOR_PALETTE.length];
 }

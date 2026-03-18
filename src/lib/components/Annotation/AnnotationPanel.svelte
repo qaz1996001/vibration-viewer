@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { annotations, selectedId, removeAnnotation, updateAnnotation } from '$lib/stores/annotationStore';
 	import type { Annotation } from '$lib/types/annotation';
-	import { formatTime } from '$lib/components/Chart/chartOptions';
+	import { formatTime } from '$lib/utils/formatTime';
+	import { ANNOTATION_COLORS, DEFAULT_ANNOTATION_COLOR } from '$lib/constants/colors';
 
 	interface PendingAnnotation {
 		type: 'point' | 'range';
@@ -17,7 +18,7 @@
 	let { pendingAnnotation = null, onconfirm, oncancel }: Props = $props();
 
 	let label = $state('');
-	let color = $state('#ff6b6b');
+	let color = $state(DEFAULT_ANNOTATION_COLOR);
 
 	// Edit state
 	let editingId = $state<string | null>(null);
@@ -26,13 +27,11 @@
 	let editOffsetX = $state(0);
 	let editOffsetY = $state(0);
 
-	const presetColors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#f9ca24', '#6c5ce7', '#a29bfe'];
-
 	// Reset form when a new pending annotation arrives
 	$effect(() => {
 		if (pendingAnnotation) {
 			label = '';
-			color = '#ff6b6b';
+			color = DEFAULT_ANNOTATION_COLOR;
 		}
 	});
 
@@ -112,7 +111,7 @@
 					class="label-input"
 				/>
 				<div class="color-picker">
-					{#each presetColors as c}
+					{#each ANNOTATION_COLORS as c}
 						<button
 							type="button"
 							class="color-swatch"
@@ -143,7 +142,7 @@
 					class="label-input"
 				/>
 				<div class="color-picker">
-					{#each presetColors as c}
+					{#each ANNOTATION_COLORS as c}
 						<button
 							type="button"
 							class="color-swatch"

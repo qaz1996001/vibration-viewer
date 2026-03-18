@@ -117,14 +117,13 @@ export function removeFile(id: string): void {
 		return copy;
 	});
 	datasetOrder.update((order) => order.filter((oid) => oid !== id));
-	activeDatasetId.update((current) => {
-		if (current === id) {
-			// Switch to first remaining dataset
-			const order = get(datasetOrder);
-			return order[0] ?? null;
-		}
-		return current;
-	});
+
+	// Read current values synchronously — avoids nested subscribe anti-pattern
+	const currentActive = get(activeDatasetId);
+	if (currentActive === id) {
+		const remaining = get(datasetOrder);
+		activeDatasetId.set(remaining.length > 0 ? remaining[0] : null);
+	}
 }
 
 export async function fetchAllChunks(
